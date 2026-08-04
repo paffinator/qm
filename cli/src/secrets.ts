@@ -146,6 +146,15 @@ export const FIRST_PARTY_SECRET_SPECS: readonly SecretSpec[] = [
     generate: MINT_LOCALLY,
   },
   {
+    name: "APP_DB_ADMIN_URL",
+    service: "core",
+    required: false,
+    description:
+      "Session-pooler Postgres URL whose role can CREATE ROLE and CREATE SCHEMA. Each published app gets its own schema and login role in this database. Unset means published apps get no database. Must not be the same database as DATABASE_URL.",
+    generate: "Supabase dashboard → Project Settings → Database → Connect → Session pooler (port 5432)",
+    managedBy: "operator",
+  },
+  {
     name: "GOOGLE_OAUTH_CLIENT_SECRET",
     service: "core",
     required: { when: { kind: "env-present", service: "core", name: "GOOGLE_OAUTH_CLIENT_ID" } },

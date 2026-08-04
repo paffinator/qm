@@ -54,7 +54,12 @@ async function applyDdl(pool: Pool, statements: string[]): Promise<void> {
   }
 }
 
-export function createPgPool(connectionString: string, statements: string[]): PgPool {
+export interface PgPoolOptions {
+  max?: number;
+  idleTimeoutMillis?: number;
+}
+
+export function createPgPool(connectionString: string, statements: string[], options: PgPoolOptions = {}): PgPool {
   const schema = statements.map((s) => s.trim()).filter((s) => s.length > 0);
   for (const stmt of schema) assertOneStatement(stmt);
   let poolP: Promise<Pool> | null = null;
@@ -62,10 +67,10 @@ export function createPgPool(connectionString: string, statements: string[]): Pg
     if (!poolP) {
       poolP = (async () => {
         const pg = (await import("pg")).default;
-        const p = new pg.Pool({ connectionString });
+        const p = new pg.Pool({ connectionString, ...options });
         p.on("error", (err) => console.error("[pg] idle client error:", err));
         try {
-          await applyDdl(p, schema);
+          if (schema.length) await applyDdl(p, schema);
         } catch (e) {
           await p.end().catch(swallowAs("pg-pool: close after schema failure", undefined));
           throw e;

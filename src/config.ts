@@ -104,6 +104,7 @@ export interface Config {
   deployDialTimeoutMs: number;
   deployAppsSessionSecret?: string;
   deployAppsLoginUrl?: string;
+  appDb?: AppDbConfig;
   deepIdleMachineMs: number;
   devIdleMachineMs: number;
   cronFireConcurrency: number;
@@ -302,6 +303,44 @@ interface AwsDeployEnv {
   dataPrefix?: string;
   snapshotIntervalMs?: number;
   dataRoleArn?: string;
+}
+
+export interface AppDbConfig {
+  adminUrl: string;
+  appHost?: string;
+  maxConnections: number;
+}
+
+function appDbEnv(env: NodeJS.ProcessEnv, databaseUrl?: string): { appDb?: AppDbConfig } {
+  const adminUrl = env.APP_DB_ADMIN_URL?.trim();
+  const appHost = env.APP_DB_APP_HOST?.trim();
+  if (!adminUrl) {
+    if (appHost) throw new Error("APP_DB_APP_HOST is set without APP_DB_ADMIN_URL — published apps would get no database");
+    return {};
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(adminUrl);
+  } catch {
+    throw new Error("APP_DB_ADMIN_URL is not a valid postgres:// URL");
+  }
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    throw new Error("APP_DB_ADMIN_URL must be a postgres:// URL");
+  }
+  if (databaseUrl) {
+    const core = new URL(databaseUrl);
+    if (core.hostname === parsed.hostname && core.pathname.replace(/^\//, "") === parsed.pathname.replace(/^\//, "")) {
+      throw new Error(
+        "APP_DB_ADMIN_URL points at the same database as DATABASE_URL — published apps must not share the core's database, because provisioning revokes default privileges on its public schema",
+      );
+    }
+  }
+  const maxRaw = env.APP_DB_MAX_CONNECTIONS;
+  const maxConnections = maxRaw === undefined ? 5 : Number(maxRaw);
+  if (!Number.isInteger(maxConnections) || maxConnections < 1) {
+    throw new Error("APP_DB_MAX_CONNECTIONS must be a positive integer");
+  }
+  return { appDb: { adminUrl, ...(appHost ? { appHost } : {}), maxConnections } };
 }
 
 function deployAppsEnv(env: NodeJS.ProcessEnv): { deployAppsSessionSecret?: string; deployAppsLoginUrl?: string } {
@@ -818,6 +857,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     deployDialTimeoutMs:
       numEnvStrict("DEPLOY_DIAL_TIMEOUT_MS", env.DEPLOY_DIAL_TIMEOUT_MS) ?? CONFIG_DEFAULTS.deployDialTimeoutMs,
     ...deployAppsEnv(env),
+    ...appDbEnv(env, env.DATABASE_URL),
     deepIdleMachineMs:
       numEnvStrict("DEEP_IDLE_MACHINE_MS", env.DEEP_IDLE_MACHINE_MS) ?? CONFIG_DEFAULTS.deepIdleMachineMs,
     devIdleMachineMs: numEnvStrict("DEV_IDLE_MACHINE_MS", env.DEV_IDLE_MACHINE_MS) ?? CONFIG_DEFAULTS.devIdleMachineMs,

@@ -68,6 +68,9 @@ import { createIdempotencyStore, type IdempotencyRecord } from "./idempotency/id
 import { createScheduler, type Scheduler } from "./cron/scheduler.ts";
 import { createPgBossCronQueue } from "./cron/job-queue.ts";
 import { createDeployStore, type Deployment } from "./deploy/deploy-store.ts";
+import { createDeploySecretStore, type DeploySecret } from "./deploy/deploy-secrets.ts";
+import { migrateDeploySecrets } from "./deploy/deploy-secret-migration.ts";
+import { appDatabasePlaintext, createPostgresAppDatabase, type StoredAppDatabase } from "./deploy/app-database.ts";
 import { createDockerDeployProvider } from "./deploy/docker-deploy-provider.ts";
 import { createAwsDeployProvider, type StoredDeployBody } from "./deploy/aws-deploy-provider.ts";
 import type { DeployProvider } from "./deploy/deploy-provider.ts";
@@ -772,6 +775,21 @@ export function buildApp(
         : {}),
     },
   });
+  const deploySecrets = createDeploySecretStore({
+    backing: artifactMap<DeploySecret>("deployment_secrets"),
+    keyMaterial: config.connectorSecretKey ?? randomBytes(32),
+  });
+  const appDatabase = config.appDb
+    ? createPostgresAppDatabase({
+        ...config.appDb,
+        backing: artifactMap<StoredAppDatabase>("app_databases"),
+        keyMaterial: config.connectorSecretKey ?? randomBytes(32),
+      })
+    : undefined;
+  const resolveDeploySecrets = async (deploymentId: string): Promise<Record<string, string>> => ({
+    ...(await deploySecrets.resolve(deploymentId)),
+    ...(await (appDatabase?.resolve(deploymentId) ?? {})),
+  });
   const deployProvider: DeployProvider =
     config.deployProvider === "aws"
       ? createAwsDeployProvider({
@@ -781,11 +799,24 @@ export function buildApp(
             : {}),
           advisoryLock,
           store: artifactMap<StoredDeployBody>("aws_deploy_bodies"),
+          resolveDeploySecrets,
         })
-      : createDockerDeployProvider();
+      : createDockerDeployProvider({ resolveDeploySecrets });
   if (config.deployProvider === "aws" && !config.awsDeploy.dataBucket && !config.awsSandbox.s3Bucket) {
     console.warn(
       "[wiring] aws deploy: no data bucket resolved (AWS_DEPLOY_DATA_BUCKET unset, sandbox is not aws) — deployed apps have NO durable /data",
+    );
+  }
+  if (config.databaseUrl && !config.connectorSecretKey) {
+    console.warn(
+      "[wiring] CONNECTOR_SECRET_KEY is unset with a database configured — app secrets are encrypted under a per-process key and will not decrypt after a restart",
+    );
+  }
+  if (!appDatabase) {
+    console.warn("[wiring] APP_DB_ADMIN_URL unset — published apps get no Postgres database");
+  } else if (appDatabasePlaintext(config.appDb!.adminUrl)) {
+    console.warn(
+      "[wiring] APP_DB_ADMIN_URL has no sslmode (or sslmode=disable) against a remote host — core's own connection to the app database is UNENCRYPTED; add sslmode=no-verify",
     );
   }
   const approvals = artifactMap<PendingApprovalRecord>("approvals");
@@ -830,6 +861,14 @@ export function buildApp(
     canReadScope,
     canWriteScope,
     managesArtifactHome,
+    secrets: deploySecrets,
+    ...(appDatabase ? { appDatabase } : {}),
+    ...(keychain
+      ? {
+          credentialFingerprints: async () =>
+            (await keychain.listAllMetadata()).map((c) => ({ id: c.id, fingerprint: c.fingerprint })),
+        }
+      : {}),
   });
   const environments = config.databaseUrl
     ? createPostgresEnvironmentStore(config.databaseUrl)
@@ -1301,6 +1340,13 @@ export function buildApp(
     deployIdleTtlMs && deployIdleTtlMs > 0
       ? createSweeper(() => app.reapIdleDeployments(deployIdleTtlMs), Math.max(5_000, Math.floor(deployIdleTtlMs / 4)))
       : null;
+  const appDatabaseSweeper = appDatabase
+    ? createSweeper(
+        () => leaderLease.hold("deploy:app-database-keepalive", () => appDatabase.sweep()),
+        6 * 60 * 60_000,
+        { immediate: true },
+      )
+    : null;
   const deepIdleMachineMs = config.deepIdleMachineMs;
   const devIdleMachineMs = config.devIdleMachineMs;
   const sweepFractions = [deepIdleMachineMs, devIdleMachineMs]
@@ -1319,6 +1365,11 @@ export function buildApp(
     : null;
   const runtime: Runtime = {
     start() {
+      if (config.connectorSecretKey) {
+        void leaderLease
+          .hold("deployments:secret-migration", () => migrateDeploySecrets({ deployStore, secrets: deploySecrets }))
+          .catch(swallowAs("wiring: deploy secret migration", undefined));
+      }
       if (!config.backgroundWorkEnabled) return;
       for (const w of workers) w.start();
       reaper.start();
@@ -1327,6 +1378,7 @@ export function buildApp(
       if (config.skillSyncPollMs > 0) skillSyncEngine.start(config.skillSyncPollMs);
       blobSweeper.start();
       idleSweeper?.start();
+      appDatabaseSweeper?.start();
       deepIdleSweeper?.start();
       reachDeniedNotifier?.start(config.insightsIntervalMs);
       wakeSweep.start();
@@ -1342,6 +1394,7 @@ export function buildApp(
       monitorPoller?.stop();
       skillSyncEngine.stop();
       idleSweeper?.stop();
+      appDatabaseSweeper?.stop();
       deepIdleSweeper?.stop();
       reachDeniedNotifier?.stop();
       blobSweeper.stop();
