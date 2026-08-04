@@ -8,7 +8,7 @@ import {
 } from "./memory/policy.ts";
 import { parseMemoryStrategyKind, type MemoryStrategyKind } from "./memory/strategy.ts";
 import { CLAUDE_ENV_PASSTHROUGH, claudeKeylessCredentialInEnv } from "./harness/claude-env.ts";
-import { CODEX_AUTH_FILE_ENV, readCodexChatgptCredential } from "./harness/codex-env.ts";
+import { CODEX_AUTH_FILE_ENV, codexKeylessCredentialInEnv, readCodexChatgptCredential } from "./harness/codex-env.ts";
 import { validateCoreSecretEnv } from "./deployment/secret-schema.ts";
 import { DEFAULT_CAPTURE_QUIET_MS } from "./memory/strategies/per-turn.ts";
 import { parseSecurityPosture, type SecurityPosture } from "./security/security-posture.ts";
@@ -158,7 +158,7 @@ export function claudeCliKeylessCredential(config: Config): boolean {
 }
 
 export function codexCliKeylessCredential(config: Config): boolean {
-  return Boolean(config.codexProcessEnv[CODEX_AUTH_FILE_ENV]?.trim());
+  return codexKeylessCredentialInEnv(config.codexProcessEnv);
 }
 
 export function providerKeysPresent(config: Config): ModelProviderAvailability {

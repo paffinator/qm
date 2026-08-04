@@ -1,5 +1,6 @@
 import { isStrongSigningSecret } from "../auth/source-auth.ts";
 import { claudeKeylessCredentialInEnv } from "../harness/claude-env.ts";
+import { codexKeylessCredentialInEnv } from "../harness/codex-env.ts";
 
 type SecretGate =
   | "production"
@@ -42,7 +43,7 @@ export const CORE_SECRET_SPECS: readonly RuntimeSecretSpec[] = [
 
 const GATE_PREDICATES: Readonly<Record<SecretGate, (env: NodeJS.ProcessEnv) => boolean>> = {
   production: (env) => env.NODE_ENV === "production",
-  codex: (env) => env.HARNESS?.trim() === "codex",
+  codex: (env) => env.HARNESS?.trim() === "codex" && !codexKeylessCredentialInEnv(env),
   postgres: (env) => env.SESSION_STORE === "postgres" || env.RUN_STORE === "postgres",
   sprites: (env) => env.SANDBOX_BACKEND === "sprites" || env.SANDBOX_SECONDARY_BACKEND === "sprites",
   "fly-sandbox": (env) => env.SANDBOX_BACKEND === "fly",
@@ -54,7 +55,9 @@ const GATE_PREDICATES: Readonly<Record<SecretGate, (env: NodeJS.ProcessEnv) => b
   "model-anthropic": (env) =>
     env.MODEL_PROVIDER?.trim() === "anthropic" &&
     !(env.HARNESS?.trim() === "claude" && claudeKeylessCredentialInEnv(env)),
-  "model-openai": (env) => env.MODEL_PROVIDER?.trim() === "openai",
+  "model-openai": (env) =>
+    env.MODEL_PROVIDER?.trim() === "openai" &&
+    !(env.HARNESS?.trim() === "codex" && codexKeylessCredentialInEnv(env)),
   "model-openrouter": (env) => env.MODEL_PROVIDER?.trim() === "openrouter",
 };
 

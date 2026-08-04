@@ -118,3 +118,30 @@ test("a claude deployment authenticated by a subscription token is not blocked f
     "pi cannot use a CLI token, so the exemption must not apply to it",
   );
 });
+
+test("a codex deployment authenticated by a ChatGPT credential is not blocked from booting", () => {
+  assert.deepEqual(
+    validateCoreSecretEnv({ HARNESS: "codex" }),
+    ["OPENAI_API_KEY"],
+    "without any credential the requirement still stands",
+  );
+  assert.deepEqual(
+    validateCoreSecretEnv({ HARNESS: "codex", CODEX_AUTH_FILE: "/home/dev/.codex/auth.json" }),
+    [],
+    "the codex CLI child authenticates from this file, so demanding an api key would block boot for nothing",
+  );
+  assert.deepEqual(
+    validateCoreSecretEnv({
+      MODEL_PROVIDER: "openai",
+      HARNESS: "codex",
+      CODEX_AUTH_FILE: "/home/dev/.codex/auth.json",
+    }),
+    [],
+    "declaring the provider the harness actually serves must not reintroduce the block",
+  );
+  assert.deepEqual(
+    validateCoreSecretEnv({ MODEL_PROVIDER: "openai", HARNESS: "pi", CODEX_AUTH_FILE: "/home/dev/.codex/auth.json" }),
+    ["OPENAI_API_KEY"],
+    "pi cannot use a codex credential, so the exemption must not apply to it",
+  );
+});

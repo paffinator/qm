@@ -64,6 +64,12 @@ The Codex harness works the same way on a ChatGPT subscription. Sign in once wit
 HARNESS=codex ORG_ID=acme CODEX_AUTH_FILE=~/.codex/auth.json npm start
 ```
 
+Set `CODEX_MODEL` as well: a ChatGPT account cannot use every model an API key can, and
+the deployment's default (`gpt-5.6-sol`) is one it rejects — OpenAI answers `The
+'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account`. Whatever
+`model` your own `~/.codex/config.toml` uses is a safe choice; `gpt-5.6-terra` is verified
+working.
+
 The file is copied into the harness's jail per runtime, so the CLI never sees your real
 home directory. It is a copy, which means a token the CLI refreshes inside the jail is
 discarded with it — when the credential eventually expires, turns fail and you run

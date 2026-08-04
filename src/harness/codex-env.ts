@@ -2,6 +2,10 @@ import { readFileSync } from "node:fs";
 
 export const CODEX_AUTH_FILE_ENV = "CODEX_AUTH_FILE";
 
+export function codexKeylessCredentialInEnv(env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env[CODEX_AUTH_FILE_ENV]?.trim());
+}
+
 export interface CodexChatgptCredential {
   contents: string;
 }
