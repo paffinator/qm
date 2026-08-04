@@ -296,8 +296,21 @@ test("env assembly precedence: caller > login shell > dev.env > worktree .env; h
   });
   assert.equal(subscription.harness, "claude");
   assert.equal(subscription.env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat01-x");
-  assert.equal(subscription.anthropicKeySource, "your Claude subscription (CLAUDE_CODE_OAUTH_TOKEN)");
+  assert.equal(
+    subscription.anthropicKeySource,
+    "your Claude subscription (CLAUDE_CODE_OAUTH_TOKEN from your login-shell profile)",
+    "the banner must name which source won, so a stale copy is diagnosable",
+  );
   assert.equal(subscription.env.ANTHROPIC_API_KEY, undefined);
+
+  const claudeMock = await assembleEnv({
+    worktree,
+    callerEnv: { HARNESS: "claude" },
+    allowMock: true,
+    log,
+    probeLoginShell: async () => "",
+  });
+  assert.equal(claudeMock.harness, "mock", "DEV_INSTANCE_ALLOW_MOCK must still rescue a credential-less claude");
   if (prevLive === undefined) delete process.env.QM_DEV_ENV;
   else process.env.QM_DEV_ENV = prevLive;
   rmSync(worktree, { recursive: true, force: true });

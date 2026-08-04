@@ -4,12 +4,20 @@ import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 
 let providerConfigured = false;
+let providerReason: string | undefined = "needs_admin_key";
+let harnessId = "pi";
 
 const upstream = createServer((req: IncomingMessage, res) => {
   if (req.url?.startsWith("/v1/surface-config")) {
     res.writeHead(200, { "content-type": "application/json" });
     return void res.end(
-      JSON.stringify({ webuiModels: [], baseModel: "m", harnessId: "pi", modelProviderConfigured: providerConfigured }),
+      JSON.stringify({
+        webuiModels: [],
+        baseModel: "m",
+        harnessId,
+        modelProviderConfigured: providerConfigured,
+        ...(providerReason ? { modelProviderReason: providerReason } : {}),
+      }),
     );
   }
   if (req.url === "/api/whoami") {
@@ -80,8 +88,34 @@ test("unconfigured deployment: the admin surface itself is reachable, so onboard
   assert.equal(((await r.json()) as { url: string }).url, "/onboarding");
 });
 
+test("an env-credential harness does not bounce admins into onboarding they cannot use", async () => {
+  harnessId = "claude";
+  providerReason = "harness_requires_deployment_env";
+  await new Promise((r) => setTimeout(r, 5_200));
+  const admin = await fetch(`${base}/`, {
+    headers: { accept: "text/html", cookie: sessionCookie("U-admin") },
+    redirect: "manual",
+  });
+  assert.equal(admin.status, 503, "redirecting here is the loop: the admin page cannot set a deployment env var");
+  const adminBody = await admin.text();
+  assert.match(adminBody, /deployment&#39;s own environment/);
+  assert.doesNotMatch(adminBody, /Ask your admin to complete onboarding/);
+
+  const member = await fetch(`${base}/`, {
+    headers: { accept: "text/html", cookie: sessionCookie("U-member") },
+    redirect: "manual",
+  });
+  assert.equal(member.status, 503);
+  assert.match(await member.text(), /will not reach it/);
+
+  harnessId = "pi";
+  providerReason = "needs_admin_key";
+  await new Promise((r) => setTimeout(r, 5_200));
+});
+
 test("once a provider is configured, admin HTML navigation proxies to web-ui again", async () => {
   providerConfigured = true;
+  providerReason = "ready";
   await new Promise((r) => setTimeout(r, 5_200));
   const r = await fetch(`${base}/`, {
     headers: { accept: "text/html", cookie: sessionCookie("U-admin") },

@@ -11,7 +11,8 @@ import {
   serviceableModelIds,
   modelProviderAvailabilityFor,
 } from "../src/model/pi-models.ts";
-import { providerKeysPresent } from "../src/config.ts";
+import { claudeCliKeylessCredential, loadConfig, providerKeysPresent } from "../src/config.ts";
+import { claudeChildEnv } from "../src/harness/claude-harness.ts";
 import { validateWebTurnModelOptions } from "../src/core/turn-options.ts";
 
 test("every registry model resolves via pi-ai (nothing offered that turns can't serve)", () => {
@@ -90,33 +91,103 @@ test("provider-key gating applies to key-authed harnesses, never to mock", () =>
 
 test("claude harness serves anthropic only, and only with a credential its CLI child can see", () => {
   const noKeys = { anthropic: false, openai: false, openrouter: false };
+  const allKeys = { anthropic: true, openai: true, openrouter: true };
   assert.deepEqual(modelProviderAvailabilityFor("claude", noKeys), noKeys);
-  assert.deepEqual(modelProviderAvailabilityFor("claude", { anthropic: true, openai: true, openrouter: true }), {
+  assert.deepEqual(modelProviderAvailabilityFor("claude", allKeys), {
     anthropic: true,
     openai: false,
     openrouter: false,
   });
-  assert.deepEqual(modelProviderAvailabilityFor("claude", noKeys, { anthropic: true, openai: true, openrouter: true }), {
-    anthropic: false,
-    openai: false,
-    openrouter: false,
-  });
+  assert.deepEqual(
+    modelProviderAvailabilityFor("claude", noKeys, allKeys),
+    noKeys,
+    "an admin-pasted key never reaches the claude CLI child",
+  );
+  assert.deepEqual(
+    modelProviderAvailabilityFor("claude", noKeys, noKeys, { claude: true }),
+    { anthropic: true, openai: false, openrouter: false },
+    "a keyless CLI credential serves anthropic with no api key present",
+  );
 });
 
-test("a claude subscription token counts as anthropic auth; an api key still does, other harnesses ignore it", () => {
-  const base = { harness: "claude", claudeProcessEnv: {} } as unknown as Parameters<typeof providerKeysPresent>[0];
-  assert.equal(providerKeysPresent(base).anthropic, false);
-  assert.equal(
-    providerKeysPresent({ ...base, claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x" } }).anthropic,
-    true,
+test("codex serves openai on a ChatGPT credential, and that credential leaks nowhere else", () => {
+  const noKeys = { anthropic: false, openai: false, openrouter: false };
+  const cli = { codex: true };
+  assert.deepEqual(modelProviderAvailabilityFor("codex", noKeys), noKeys);
+  assert.deepEqual(modelProviderAvailabilityFor("codex", noKeys, noKeys, cli), {
+    anthropic: false,
+    openai: true,
+    openrouter: false,
+  });
+  assert.deepEqual(
+    modelProviderAvailabilityFor("claude", noKeys, noKeys, cli),
+    noKeys,
+    "a ChatGPT credential cannot serve an anthropic model",
   );
-  assert.equal(providerKeysPresent({ ...base, claudeProcessEnv: { ANTHROPIC_AUTH_TOKEN: "tok" } }).anthropic, true);
-  assert.equal(providerKeysPresent({ ...base, claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "  " } }).anthropic, false);
-  assert.equal(providerKeysPresent({ ...base, anthropicApiKey: "sk-ant-key" }).anthropic, true);
+  assert.deepEqual(modelProviderAvailabilityFor("opencode", noKeys, noKeys, cli), noKeys);
+  assert.deepEqual(modelProviderAvailabilityFor("pi", noKeys, noKeys, cli), noKeys);
+});
+
+test("a keyless claude credential never leaks into another harness's availability", () => {
+  const noKeys = { anthropic: false, openai: false, openrouter: false };
+  const cli = { claude: true };
+  assert.deepEqual(
+    modelProviderAvailabilityFor("opencode", noKeys, noKeys, cli),
+    noKeys,
+    "opencode cannot use a Claude Code OAuth token",
+  );
+  assert.deepEqual(modelProviderAvailabilityFor("codex", noKeys, noKeys, cli), noKeys);
+  assert.deepEqual(modelProviderAvailabilityFor("pi", noKeys, noKeys, cli), noKeys);
+});
+
+test("the keyless-credential predicate reads the claude child env, whatever the deployment harness is", () => {
+  const base = { claudeProcessEnv: {} } as unknown as Parameters<typeof claudeCliKeylessCredential>[0];
+  assert.equal(claudeCliKeylessCredential(base), false);
+  assert.equal(claudeCliKeylessCredential({ ...base, claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "x" } }), true);
+  assert.equal(claudeCliKeylessCredential({ ...base, claudeProcessEnv: { ANTHROPIC_AUTH_TOKEN: "tok" } }), true);
+  assert.equal(claudeCliKeylessCredential({ ...base, claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "  " } }), false);
   assert.equal(
-    providerKeysPresent({ ...base, harness: "pi", claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x" } })
-      .anthropic,
+    claudeCliKeylessCredential({ ...base, harness: "pi", claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "x" } }),
+    true,
+    "the credential is a fact about the child env, not about the deployment default harness",
+  );
+});
+
+test("providerKeysPresent reports api keys only, and trims every arm", () => {
+  const base = { claudeProcessEnv: {} } as unknown as Parameters<typeof providerKeysPresent>[0];
+  assert.deepEqual(providerKeysPresent(base), { anthropic: false, openai: false, openrouter: false });
+  assert.equal(providerKeysPresent({ ...base, anthropicApiKey: "sk-ant-key" }).anthropic, true);
+  assert.equal(providerKeysPresent({ ...base, anthropicApiKey: "   " }).anthropic, false);
+  assert.equal(providerKeysPresent({ ...base, openaiApiKey: "   " }).openai, false);
+  assert.equal(providerKeysPresent({ ...base, openrouterApiKey: "   " }).openrouter, false);
+  assert.equal(
+    providerKeysPresent({ ...base, claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "x" } }).anthropic,
     false,
+    "a CLI credential is not an api key and must not ride the provider vector",
+  );
+});
+
+test("env -> config -> claude child env carries the subscription token end to end", () => {
+  const config = loadConfig({
+    HARNESS: "claude",
+    ORG_ID: "acme",
+    CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-live",
+  });
+  assert.equal(config.claudeProcessEnv.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat01-live");
+  assert.equal(claudeCliKeylessCredential(config), true);
+  assert.equal(providerKeysPresent(config).anthropic, false);
+  const childEnv = claudeChildEnv(config.claudeProcessEnv, "/tmp/jail-fixture");
+  assert.equal(
+    childEnv.CLAUDE_CODE_OAUTH_TOKEN,
+    "sk-ant-oat01-live",
+    "dropping the token from either allowlist must fail a test, not fail silently at runtime",
+  );
+  assert.equal(childEnv.HOME, "/tmp/jail-fixture");
+  assert.deepEqual(
+    modelProviderAvailabilityFor("claude", providerKeysPresent(config), undefined, {
+      claude: claudeCliKeylessCredential(config),
+    }),
+    { anthropic: true, openai: false, openrouter: false },
   );
 });
 

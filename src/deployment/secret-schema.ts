@@ -1,4 +1,5 @@
 import { isStrongSigningSecret } from "../auth/source-auth.ts";
+import { claudeKeylessCredentialInEnv } from "../harness/claude-env.ts";
 
 type SecretGate =
   | "production"
@@ -50,7 +51,9 @@ const GATE_PREDICATES: Readonly<Record<SecretGate, (env: NodeJS.ProcessEnv) => b
   "google-oauth": (env) => Boolean(env.GOOGLE_OAUTH_CLIENT_ID),
   "dropbox-oauth": (env) => Boolean(env.DROPBOX_OAUTH_CLIENT_ID),
   "linear-oauth": (env) => Boolean(env.LINEAR_OAUTH_CLIENT_ID),
-  "model-anthropic": (env) => env.MODEL_PROVIDER?.trim() === "anthropic",
+  "model-anthropic": (env) =>
+    env.MODEL_PROVIDER?.trim() === "anthropic" &&
+    !(env.HARNESS?.trim() === "claude" && claudeKeylessCredentialInEnv(env)),
   "model-openai": (env) => env.MODEL_PROVIDER?.trim() === "openai",
   "model-openrouter": (env) => env.MODEL_PROVIDER?.trim() === "openrouter",
 };

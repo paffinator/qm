@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   MODEL_PROVIDER_KEYS,
+  cliAuthHarness,
   mockHarnessWarning,
   validatePortalTrust,
   type ModelProvider,
@@ -205,7 +206,11 @@ async function baseModelCheck(config: QmConfig, secrets: Map<string, string>): P
   if (mockHarness) warn(mockHarness);
   const provider = config.modelProvider;
   if (!provider) {
-    step("base model: no modelProvider set — an administrator supplies the key from the Admin page");
+    step(
+      cliAuthHarness(config)
+        ? `base model: no modelProvider set — the ${config.env.core?.HARNESS?.trim()} harness reads its credential from the deployment environment, not the Admin page`
+        : "base model: no modelProvider set — an administrator supplies the key from the Admin page",
+    );
     return;
   }
   const name = MODEL_PROVIDER_KEYS[provider];

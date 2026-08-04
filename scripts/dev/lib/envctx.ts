@@ -77,6 +77,8 @@ export function seedEnvFromMain(worktree: string, log: (msg: string) => void): v
   }
 }
 
+const CLAUDE_KEYLESS_CREDENTIAL_ENV = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"] as const;
+
 async function envVarFromLoginShell(name: string): Promise<string> {
   const shell = process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : "/bin/zsh";
   const res = await run(shell, ["-lic", `printf "__AKB__%s__AKE__" "\${${name}:-}"`], { timeoutMs: 15_000 });
@@ -102,6 +104,7 @@ export async function assembleEnv(opts: {
   }
 
   const probe = opts.probeLoginShell ?? envVarFromLoginShell;
+  const claudeCredentialSource: Record<string, string> = {};
 
   let anthropicKeySource = "";
   if (opts.callerEnv.ANTHROPIC_API_KEY) anthropicKeySource = "your shell export";
@@ -132,23 +135,49 @@ export async function assembleEnv(opts: {
     harness = opts.callerEnv.HARNESS;
     env.HARNESS = harness;
     if (harness === "codex" && !env.OPENAI_API_KEY) {
-      throw new Error(
-        "HARNESS=codex needs OPENAI_API_KEY (its CLI cannot do browser OAuth in a container) -- export it, or add it to the live env file or the worktree .env",
-      );
-    }
-    if (harness === "claude") {
-      if (!env.CLAUDE_CODE_OAUTH_TOKEN) {
-        const shellToken = await probe("CLAUDE_CODE_OAUTH_TOKEN");
-        if (shellToken) env.CLAUDE_CODE_OAUTH_TOKEN = shellToken;
-        else if (wtEnv.CLAUDE_CODE_OAUTH_TOKEN) env.CLAUDE_CODE_OAUTH_TOKEN = wtEnv.CLAUDE_CODE_OAUTH_TOKEN;
-      }
-      if (!env.ANTHROPIC_API_KEY && !env.ANTHROPIC_AUTH_TOKEN && !env.CLAUDE_CODE_OAUTH_TOKEN) {
+      if (!env.CODEX_AUTH_FILE && wtEnv.CODEX_AUTH_FILE) env.CODEX_AUTH_FILE = wtEnv.CODEX_AUTH_FILE;
+      if (!env.CODEX_AUTH_FILE) {
         throw new Error(
-          `HARNESS=claude needs an anthropic credential for its CLI child: run "claude setup-token" and export CLAUDE_CODE_OAUTH_TOKEN to bill turns to your Claude subscription, or supply ANTHROPIC_API_KEY -- either may also live in ${liveEnvFile} or the worktree .env`,
+          'HARNESS=codex needs OPENAI_API_KEY (its CLI cannot do browser OAuth in a container), or CODEX_AUTH_FILE pointing at a "codex login" auth.json to bill turns to your ChatGPT subscription -- either may also live in the live env file or the worktree .env',
         );
       }
-      if (!anthropicKeySource && env.CLAUDE_CODE_OAUTH_TOKEN) {
-        anthropicKeySource = "your Claude subscription (CLAUDE_CODE_OAUTH_TOKEN)";
+      openaiKeySource = `your ChatGPT subscription (CODEX_AUTH_FILE=${env.CODEX_AUTH_FILE})`;
+    }
+    if (harness === "claude") {
+      for (const name of CLAUDE_KEYLESS_CREDENTIAL_ENV) {
+        if (opts.callerEnv[name]) {
+          claudeCredentialSource[name] = "your shell export";
+          continue;
+        }
+        const shellValue = await probe(name);
+        if (shellValue) {
+          env[name] = shellValue;
+          claudeCredentialSource[name] = "your login-shell profile";
+        } else if (env[name]) {
+          claudeCredentialSource[name] = liveEnvFile;
+        } else if (wtEnv[name]) {
+          env[name] = wtEnv[name];
+          claudeCredentialSource[name] = "the worktree .env";
+        }
+      }
+      const keyless = CLAUDE_KEYLESS_CREDENTIAL_ENV.find((name) => env[name]);
+      if (!env.ANTHROPIC_API_KEY && !keyless) {
+        if (opts.allowMock) {
+          harness = "mock";
+          env.HARNESS = "mock";
+          warnings.push(
+            "mock turns explicitly allowed by DEV_INSTANCE_ALLOW_MOCK=1 -- HARNESS=claude found no anthropic credential",
+          );
+        } else {
+          throw new Error(
+            `HARNESS=claude needs an anthropic credential for its CLI child: run "claude setup-token" and export CLAUDE_CODE_OAUTH_TOKEN to bill turns to your Claude subscription, or supply ANTHROPIC_API_KEY -- either may also live in ${liveEnvFile} or the worktree .env`,
+          );
+        }
+      } else if (!anthropicKeySource && keyless) {
+        anthropicKeySource =
+          keyless === "CLAUDE_CODE_OAUTH_TOKEN"
+            ? `your Claude subscription (${keyless} from ${claudeCredentialSource[keyless]})`
+            : `${keyless} from ${claudeCredentialSource[keyless]}`;
       }
     }
   } else if (env.ANTHROPIC_API_KEY) {

@@ -7,6 +7,8 @@ import {
   type MemoryRecallMode,
 } from "./memory/policy.ts";
 import { parseMemoryStrategyKind, type MemoryStrategyKind } from "./memory/strategy.ts";
+import { CLAUDE_ENV_PASSTHROUGH, claudeKeylessCredentialInEnv } from "./harness/claude-env.ts";
+import { CODEX_AUTH_FILE_ENV, readCodexChatgptCredential } from "./harness/codex-env.ts";
 import { validateCoreSecretEnv } from "./deployment/secret-schema.ts";
 import { DEFAULT_CAPTURE_QUIET_MS } from "./memory/strategies/per-turn.ts";
 import { parseSecurityPosture, type SecurityPosture } from "./security/security-posture.ts";
@@ -151,18 +153,19 @@ export function configuredModelForHarness(config: Config, harness: string): stri
   return config.modelId;
 }
 
-const CLAUDE_CLI_KEYLESS_CREDENTIALS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"] as const;
-
 export function claudeCliKeylessCredential(config: Config): boolean {
-  if (config.harness !== "claude") return false;
-  return CLAUDE_CLI_KEYLESS_CREDENTIALS.some((name) => Boolean(config.claudeProcessEnv[name]?.trim()));
+  return claudeKeylessCredentialInEnv(config.claudeProcessEnv);
+}
+
+export function codexCliKeylessCredential(config: Config): boolean {
+  return Boolean(config.codexProcessEnv[CODEX_AUTH_FILE_ENV]?.trim());
 }
 
 export function providerKeysPresent(config: Config): ModelProviderAvailability {
   return {
-    anthropic: Boolean(config.anthropicApiKey) || claudeCliKeylessCredential(config),
-    openai: Boolean(config.openaiApiKey),
-    openrouter: Boolean(config.openrouterApiKey),
+    anthropic: Boolean(config.anthropicApiKey?.trim()),
+    openai: Boolean(config.openaiApiKey?.trim()),
+    openrouter: Boolean(config.openrouterApiKey?.trim()),
   };
 }
 
@@ -697,29 +700,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       "ALL_PROXY",
       "OPENAI_API_KEY",
       "OPENAI_BASE_URL",
-      "CODEX_ACCESS_TOKEN",
+      CODEX_AUTH_FILE_ENV,
       "HOME",
       "CODEX_HOME",
     ].flatMap((name) => (env[name] === undefined ? [] : [[name, env[name]]])),
   ) as NodeJS.ProcessEnv;
+  const codexAuthFile = env[CODEX_AUTH_FILE_ENV]?.trim();
+  if (codexAuthFile) readCodexChatgptCredential(codexAuthFile);
   const claudeProcessEnv = Object.fromEntries(
-    [
-      "PATH",
-      "TMPDIR",
-      "LANG",
-      "LC_ALL",
-      "SSL_CERT_FILE",
-      "SSL_CERT_DIR",
-      "NODE_EXTRA_CA_CERTS",
-      "HTTP_PROXY",
-      "HTTPS_PROXY",
-      "NO_PROXY",
-      "ALL_PROXY",
-      "ANTHROPIC_API_KEY",
-      "ANTHROPIC_AUTH_TOKEN",
-      "ANTHROPIC_BASE_URL",
-      "CLAUDE_CODE_OAUTH_TOKEN",
-    ].flatMap((name) => (env[name] === undefined ? [] : [[name, env[name]]])),
+    CLAUDE_ENV_PASSTHROUGH.flatMap((name) => (env[name] === undefined ? [] : [[name, env[name]]])),
   ) as NodeJS.ProcessEnv;
   const turnWallClockMs =
     (numEnvStrict("TURN_WALL_CLOCK_SEC", env.TURN_WALL_CLOCK_SEC) ?? CONFIG_DEFAULTS.turnWallClockSec) * 1000;

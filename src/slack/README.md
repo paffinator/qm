@@ -51,7 +51,23 @@ HARNESS=claude ORG_ID=acme CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-… npm start
 Turns then draw on that subscription's usage allowance rather than billing per token, and
 they share its limits with your own Claude Code usage. Because the token authenticates as
 one person, this is for running your own instance — a deployment that serves other people
-needs an API key, set in its environment or supplied by an admin on the Admin page.
+needs an `ANTHROPIC_API_KEY`.
+
+The Claude Code harness spawns its CLI in a jail with `HOME` and `CLAUDE_CONFIG_DIR`
+redirected, so it reads credentials only from the deployment's own environment. A key an
+admin pastes into the Admin page reaches the Pi harness, never this one.
+
+The Codex harness works the same way on a ChatGPT subscription. Sign in once with
+`codex login`, then point the deployment at the credential it wrote:
+
+```bash
+HARNESS=codex ORG_ID=acme CODEX_AUTH_FILE=~/.codex/auth.json npm start
+```
+
+The file is copied into the harness's jail per runtime, so the CLI never sees your real
+home directory. It is a copy, which means a token the CLI refreshes inside the jail is
+discarded with it — when the credential eventually expires, turns fail and you run
+`codex login` again. `OPENAI_API_KEY` still takes precedence when both are set.
 
 (Or put the tokens in the repo-root `.env` — `npm start` loads it via
 `node --env-file-if-exists`.) It logs `connected as @agent …` when live; without

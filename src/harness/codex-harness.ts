@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { CONFIG_DEFAULTS, type Config } from "../config.ts";
+import { CODEX_AUTH_FILE_ENV, readCodexChatgptCredential } from "./codex-env.ts";
 import { NonRetryableTurnError } from "../core/turn-error.ts";
 import { DEFAULT_CODEX_MODEL_ID, modelSupportedByHarness } from "../model/pi-models.ts";
 import { startSignalPoll, type RunSignalStore } from "../runs/run-signal-store.ts";
@@ -182,7 +183,6 @@ const CODEX_ENV_PASSTHROUGH = [
   "ALL_PROXY",
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
-  "CODEX_ACCESS_TOKEN",
 ] as const;
 
 export function codexChildEnv(source: NodeJS.ProcessEnv, jail: string): NodeJS.ProcessEnv {
@@ -199,13 +199,15 @@ export function codexChildEnv(source: NodeJS.ProcessEnv, jail: string): NodeJS.P
 export function prepareCodexHome(source: NodeJS.ProcessEnv, jail: string): string {
   const target = join(jail, "codex-home");
   mkdirSync(target, { recursive: true });
+  const authFile = join(target, "auth.json");
   if (source.OPENAI_API_KEY) {
-    writeFileSync(
-      join(target, "auth.json"),
-      JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: source.OPENAI_API_KEY }),
-      { mode: 0o600 },
-    );
+    writeFileSync(authFile, JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: source.OPENAI_API_KEY }), {
+      mode: 0o600,
+    });
+    return target;
   }
+  const credentialPath = source[CODEX_AUTH_FILE_ENV]?.trim();
+  if (credentialPath) writeFileSync(authFile, readCodexChatgptCredential(credentialPath).contents, { mode: 0o600 });
   return target;
 }
 

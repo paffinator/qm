@@ -96,3 +96,25 @@ test("production rejects weak encryption key material for managed credentials", 
   assert.deepEqual(validateCoreSecretEnv(env), []);
   assert.deepEqual(validateCoreSecretEnv({ ...env, CONNECTOR_SECRET_KEY: "short" }), ["CONNECTOR_SECRET_KEY"]);
 });
+
+test("a claude deployment authenticated by a subscription token is not blocked from booting", () => {
+  assert.deepEqual(
+    validateCoreSecretEnv({ MODEL_PROVIDER: "anthropic", HARNESS: "claude" }),
+    ["ANTHROPIC_API_KEY"],
+    "without any credential the requirement still stands",
+  );
+  assert.deepEqual(
+    validateCoreSecretEnv({
+      MODEL_PROVIDER: "anthropic",
+      HARNESS: "claude",
+      CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x",
+    }),
+    [],
+    "the claude CLI child authenticates from this token, so demanding an api key would block boot for nothing",
+  );
+  assert.deepEqual(
+    validateCoreSecretEnv({ MODEL_PROVIDER: "anthropic", HARNESS: "pi", CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x" }),
+    ["ANTHROPIC_API_KEY"],
+    "pi cannot use a CLI token, so the exemption must not apply to it",
+  );
+});

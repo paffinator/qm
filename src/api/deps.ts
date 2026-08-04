@@ -1,4 +1,4 @@
-import type { ModelProviderAvailability } from "../model/pi-models.ts";
+import type { CliHarnessCredentials, ModelProviderAvailability } from "../model/pi-models.ts";
 import type { ModelCredentialStore } from "../model/model-credential-store.ts";
 import type { ReplayDedupe } from "../auth/replay-dedupe.ts";
 import type { FetchLike, OAuthClientResolver } from "../connectors/oauth.ts";
@@ -79,6 +79,7 @@ export interface ServerDeps {
   baseModelDefault?: string;
   modelProviders?: ModelProviderAvailability;
   providerKeys?: ModelProviderAvailability;
+  cliCredentials?: CliHarnessCredentials;
   modelCredentials?: ModelCredentialStore;
   modelCredentialFetch?: typeof fetch;
   brandingDefault?: { accent?: string; mark?: string; selfLabel?: string };

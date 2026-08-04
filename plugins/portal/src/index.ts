@@ -82,6 +82,7 @@ const PLAYGROUND_MINT_WINDOW_S = playgroundIntEnv("PORTAL_PLAYGROUND_MINT_WINDOW
 const NEUTRAL_ACCENT = "#4f46e5";
 let brandAccent = NEUTRAL_ACCENT;
 let modelProviderConfigured: boolean | undefined;
+let modelProviderReason: string | undefined;
 let surfaceConfigNextAt = 0;
 let surfaceConfigInflight: Promise<void> | null = null;
 function refreshSurfaceConfig(): Promise<void> {
@@ -101,10 +102,15 @@ async function fetchSurfaceConfig(): Promise<void> {
       signal: AbortSignal.timeout(2_000),
     });
     if (r.ok) {
-      const body = (await r.json()) as { branding?: { accent?: unknown }; modelProviderConfigured?: unknown };
+      const body = (await r.json()) as {
+        branding?: { accent?: unknown };
+        modelProviderConfigured?: unknown;
+        modelProviderReason?: unknown;
+      };
       brandAccent = typeof body.branding?.accent === "string" ? body.branding.accent : NEUTRAL_ACCENT;
       modelProviderConfigured =
         typeof body.modelProviderConfigured === "boolean" ? body.modelProviderConfigured : undefined;
+      modelProviderReason = typeof body.modelProviderReason === "string" ? body.modelProviderReason : undefined;
       surfaceConfigNextAt = Date.now() + (modelProviderConfigured === false ? 5_000 : 30_000);
     }
   } catch {
@@ -468,7 +474,18 @@ export function nonAdminDeniedHtml(o: { sub: string; org: string }): string {
   });
 }
 
-export function notConfiguredHtml(): string {
+export function notConfiguredHtml(reason?: string): string {
+  if (reason === "harness_requires_deployment_env") {
+    return cardPage({
+      title: "Not set up yet",
+      heading: "This deployment isn't set up yet",
+      msg: "This deployment runs an agent that reads its credentials from the deployment's own environment, so the assistant can't answer until one is set there. Adding a key in the Admin area will not reach it.",
+      icon: ALERT_ICON,
+      warn: true,
+      actions: `<a class="btn primary" href="/">Try again</a>`,
+      help: "Whoever operates this deployment needs to set a model credential in its environment and restart it.",
+    });
+  }
   return cardPage({
     title: "Not set up yet",
     heading: "This deployment isn't set up yet",
@@ -1054,11 +1071,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (key === "web-ui" && method === "GET" && wantsHtml(req)) {
     await refreshSurfaceConfig();
     if (modelProviderConfigured === false) {
-      if (await isAdmin(session.sub)) {
+      if (modelProviderReason !== "harness_requires_deployment_env" && (await isAdmin(session.sub))) {
         res.writeHead(302, { location: "/admin/onboarding", "cache-control": "no-store" });
         return void res.end();
       }
-      return sendHtml(res, 503, notConfiguredHtml());
+      return sendHtml(res, 503, notConfiguredHtml(modelProviderReason));
     }
   }
 

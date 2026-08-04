@@ -714,6 +714,11 @@ function configuredHarness(config: QmConfig): string {
   return config.env.core?.HARNESS?.trim() || (config.target === "fly" ? "pi" : "mock");
 }
 
+export function cliAuthHarness(config: QmConfig): boolean {
+  const harness = configuredHarness(config);
+  return harness === "claude" || harness === "codex" || harness === "opencode";
+}
+
 export function mockHarnessWarning(config: QmConfig): string | undefined {
   if (configuredHarness(config) !== "mock") return undefined;
   const unset = !config.env.core?.HARNESS?.trim();

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -276,18 +276,21 @@ test("Codex child environment excludes core credentials and user homes", () => {
       DATABASE_URL: "postgres://secret",
       ANTHROPIC_API_KEY: "anthropic-secret",
       OPENAI_API_KEY: "openai-needed-by-provider",
-      CODEX_ACCESS_TOKEN: "codex-access-token",
+      CODEX_AUTH_FILE: "/Users/private/.codex/auth.json",
     },
     "/tmp/control-jail",
   );
 
-  assert.deepEqual(env, {
-    PATH: "/bin",
-    HOME: "/tmp/control-jail",
-    CODEX_HOME: "/tmp/control-jail/codex-home",
-    OPENAI_API_KEY: "openai-needed-by-provider",
-    CODEX_ACCESS_TOKEN: "codex-access-token",
-  });
+  assert.deepEqual(
+    env,
+    {
+      PATH: "/bin",
+      HOME: "/tmp/control-jail",
+      CODEX_HOME: "/tmp/control-jail/codex-home",
+      OPENAI_API_KEY: "openai-needed-by-provider",
+    },
+    "the host credential path is used to seed the jail, never handed to the child",
+  );
 });
 
 test("Codex materializes API-key auth into its isolated home, and never an ambient login", (t) => {
@@ -302,6 +305,45 @@ test("Codex materializes API-key auth into its isolated home, and never an ambie
   const bare = mkdtempSync(join(tmpdir(), "qm-codex-auth-bare-"));
   t.after(() => rmSync(bare, { recursive: true, force: true }));
   assert.equal(existsSync(join(prepareCodexHome({ HOME: homedir() }, bare), "auth.json")), false);
+});
+
+test("Codex seeds its isolated home from a ChatGPT subscription credential when there is no api key", (t) => {
+  const host = mkdtempSync(join(tmpdir(), "qm-codex-host-"));
+  t.after(() => rmSync(host, { recursive: true, force: true }));
+  const credentialPath = join(host, "auth.json");
+  const credential = {
+    auth_mode: "chatgpt",
+    OPENAI_API_KEY: null,
+    tokens: { access_token: "access", refresh_token: "refresh", account_id: "acct" },
+  };
+  writeFileSync(credentialPath, JSON.stringify(credential));
+
+  const jail = mkdtempSync(join(tmpdir(), "qm-codex-chatgpt-"));
+  t.after(() => rmSync(jail, { recursive: true, force: true }));
+  const home = prepareCodexHome({ CODEX_AUTH_FILE: credentialPath }, jail);
+  assert.deepEqual(JSON.parse(readFileSync(join(home, "auth.json"), "utf8")), credential);
+  assert.equal(statSync(join(home, "auth.json")).mode & 0o777, 0o600, "a copied credential must not be world-readable");
+
+  const apiKeyWins = mkdtempSync(join(tmpdir(), "qm-codex-both-"));
+  t.after(() => rmSync(apiKeyWins, { recursive: true, force: true }));
+  const bothHome = prepareCodexHome({ OPENAI_API_KEY: "sk-test", CODEX_AUTH_FILE: credentialPath }, apiKeyWins);
+  assert.equal(JSON.parse(readFileSync(join(bothHome, "auth.json"), "utf8")).auth_mode, "apikey");
+});
+
+test("Codex rejects a credential file that is missing, malformed, or not a ChatGPT login", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "qm-codex-bad-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const jail = () => mkdtempSync(join(tmpdir(), "qm-codex-bad-jail-"));
+
+  assert.throws(() => prepareCodexHome({ CODEX_AUTH_FILE: join(dir, "nope.json") }, jail()), /could not be read/);
+
+  const notJson = join(dir, "not.json");
+  writeFileSync(notJson, "{not json");
+  assert.throws(() => prepareCodexHome({ CODEX_AUTH_FILE: notJson }, jail()), /not valid JSON/);
+
+  const apiKeyOnly = join(dir, "apikey.json");
+  writeFileSync(apiKeyOnly, JSON.stringify({ auth_mode: "apikey", OPENAI_API_KEY: "sk-x" }));
+  assert.throws(() => prepareCodexHome({ CODEX_AUTH_FILE: apiKeyOnly }, jail()), /no ChatGPT tokens/);
 });
 
 test("Codex children cannot use parent surface, control, or terminal tools", () => {

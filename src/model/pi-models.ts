@@ -210,21 +210,30 @@ export function serviceableModelIds(ids: readonly string[], providers: ModelProv
 
 export const ALL_PROVIDERS_AVAILABLE: ModelProviderAvailability = { anthropic: true, openai: true, openrouter: true };
 
-export const NO_PROVIDERS_AVAILABLE: ModelProviderAvailability = {
-  anthropic: false,
-  openai: false,
-  openrouter: false,
-};
+export interface CliHarnessCredentials {
+  claude?: boolean;
+  codex?: boolean;
+}
+
+export function harnessReadsDeploymentEnvOnly(harness: string): boolean {
+  return harness === "claude" || harness === "codex" || harness === "opencode";
+}
 
 export function modelProviderAvailabilityFor(
   harness: string,
   configKeys: ModelProviderAvailability,
   managedKeys: ModelProviderAvailability = configKeys,
+  cliCredentials: CliHarnessCredentials = {},
 ): ModelProviderAvailability {
   if (harness === "pi") return managedKeys;
   if (harness === "opencode") return { ...configKeys, openrouter: false };
-  if (harness === "codex") return configKeys;
-  if (harness === "claude") return configKeys.anthropic ? onlyProvider("anthropic") : NO_PROVIDERS_AVAILABLE;
+  if (harness === "codex") return { ...configKeys, openai: configKeys.openai || Boolean(cliCredentials.codex) };
+  if (harness === "claude")
+    return {
+      anthropic: configKeys.anthropic || Boolean(cliCredentials.claude),
+      openai: false,
+      openrouter: false,
+    };
   return ALL_PROVIDERS_AVAILABLE;
 }
 

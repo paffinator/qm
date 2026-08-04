@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { createInsecureTestServer } from "../src/api/server.ts";
 import { buildApp, type BuiltApp } from "../src/wiring.ts";
 import { testConfig } from "./support/test-config.ts";
-import { providerKeysPresent } from "../src/config.ts";
+import { claudeCliKeylessCredential, providerKeysPresent } from "../src/config.ts";
 import { createModelCredentialStore, type StoredModelCredential } from "../src/model/model-credential-store.ts";
 import { createMemoryMap } from "../src/persistence/durable-map.ts";
 
@@ -34,6 +34,7 @@ function start(
     modelCredentialFetch,
     harnessId: config.harness ?? "pi",
     providerKeys: providerKeysPresent(resolved),
+    cliCredentials: { claude: claudeCliKeylessCredential(resolved) },
     admin: built.admin,
     auditLog: built.auditLog,
   });
@@ -428,6 +429,54 @@ test("surface-config: a claude subscription token configures the surface, absenc
     );
   } finally {
     await unauthenticated.close();
+  }
+});
+
+test("surface-config explains why a provider is unconfigured, per harness", async () => {
+  const readReason = async (base: string) =>
+    (await (await fetch(`${base}/v1/surface-config`)).json()) as {
+      modelProviderConfigured?: boolean;
+      modelProviderReason?: string;
+    };
+
+  const claudeEnvOnly = start({ harness: "claude", claudeProcessEnv: {} });
+  try {
+    const body = await readReason(claudeEnvOnly.base);
+    assert.equal(body.modelProviderConfigured, false);
+    assert.equal(
+      body.modelProviderReason,
+      "harness_requires_deployment_env",
+      "the portal uses this to stop bouncing admins into an onboarding page that cannot help",
+    );
+    await claudeEnvOnly.built.modelCredentials.set("anthropic", "admin-key", "admin-alice@default-org");
+    const afterKey = await readReason(claudeEnvOnly.base);
+    assert.equal(afterKey.modelProviderConfigured, false);
+    assert.equal(afterKey.modelProviderReason, "harness_requires_deployment_env");
+  } finally {
+    await claudeEnvOnly.close();
+  }
+
+  const claudeSubscription = start({
+    harness: "claude",
+    claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-test" },
+  });
+  try {
+    const body = await readReason(claudeSubscription.base);
+    assert.equal(body.modelProviderConfigured, true);
+    assert.equal(body.modelProviderReason, "ready");
+  } finally {
+    await claudeSubscription.close();
+  }
+
+  const pi = start();
+  try {
+    const body = await readReason(pi.base);
+    assert.equal(body.modelProviderConfigured, false);
+    assert.equal(body.modelProviderReason, "needs_admin_key", "an admin-pasted key does reach the pi harness");
+    await pi.built.modelCredentials.set("anthropic", "admin-key", "admin-alice@default-org");
+    assert.equal((await readReason(pi.base)).modelProviderReason, "ready");
+  } finally {
+    await pi.close();
   }
 });
 

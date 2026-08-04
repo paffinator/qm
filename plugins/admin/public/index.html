@@ -6984,19 +6984,28 @@
         const baseModel = config.data.baseModel || config.data.baseModelDefault || "";
         const baseProvider = onboardingProviderForModel(baseModel);
         const baseStatus = onboardingModelStatuses.find((item) => item.provider === baseProvider);
+        const harnessDefault = config.data.harnessDefault || "pi";
+        const envOnlyHarness =
+          harnessDefault === "claude" || harnessDefault === "codex" || harnessDefault === "opencode";
+        const harnessServiceable = (config.data.baseModelOptions || []).length > 0;
+        const envCredentialNeeded = envOnlyHarness && !harnessServiceable;
         onboardingBadge(
           "onboarding-model-badge",
-          baseStatus?.configured ? "Ready" : "Needs a key",
-          Boolean(baseStatus?.configured),
+          envCredentialNeeded ? "Needs a deployment credential" : baseStatus?.configured ? "Ready" : "Needs a key",
+          !envCredentialNeeded && Boolean(baseStatus?.configured),
         );
-        $("onboarding-model-summary").textContent = !baseModel
-          ? "No base model is configured yet — pick a provider and model below."
-          : baseStatus?.configured
-            ? baseModel + " · " + (baseStatus.source === "admin" ? "admin-managed key" : "deployment key")
-            : baseModel +
-              " cannot run until its " +
-              (MODEL_PROVIDER_LABELS[baseProvider] || connectorName(baseProvider)) +
-              " key is configured.";
+        $("onboarding-model-summary").textContent = envCredentialNeeded
+          ? "This deployment runs the " +
+            harnessDefault +
+            " harness, which reads its credential from the deployment's own environment. A key saved here will not reach it — set one in the environment and restart."
+          : !baseModel
+            ? "No base model is configured yet — pick a provider and model below."
+            : baseStatus?.configured
+              ? baseModel + " · " + (baseStatus.source === "admin" ? "admin-managed key" : "deployment key")
+              : baseModel +
+                " cannot run until its " +
+                (MODEL_PROVIDER_LABELS[baseProvider] || connectorName(baseProvider)) +
+                " key is configured.";
         renderOnboardingProviderOptions(baseProvider);
         renderOnboardingModelOptions(baseModel);
 

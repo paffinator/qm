@@ -5,6 +5,7 @@ import { ByteSourceTooLargeError } from "../../files/durable-byte-store.ts";
 import {
   defaultModelForHarness,
   isHarnessId,
+  harnessReadsDeploymentEnvOnly,
   modelProviderAvailabilityFor,
   modelSupportedByHarness,
   resolveModel,
@@ -857,8 +858,19 @@ async function getSurfaceConfig(ctx: ApiCtx): Promise<void> {
   const harnessId = deps.harnessId ?? "pi";
   const managedKeys = deps.modelCredentials ? await deps.modelCredentials.availability() : null;
   const servingProviders = managedKeys
-    ? modelProviderAvailabilityFor(harnessId, deps.providerKeys ?? ALL_PROVIDERS_AVAILABLE, managedKeys)
+    ? modelProviderAvailabilityFor(
+        harnessId,
+        deps.providerKeys ?? ALL_PROVIDERS_AVAILABLE,
+        managedKeys,
+        deps.cliCredentials,
+      )
     : null;
+  const modelProviderConfigured = servingProviders ? Object.values(servingProviders).some(Boolean) : null;
+  const unconfiguredReason = harnessReadsDeploymentEnvOnly(harnessId)
+    ? "harness_requires_deployment_env"
+    : "needs_admin_key";
+  let modelProviderReason: string | null = null;
+  if (modelProviderConfigured !== null) modelProviderReason = modelProviderConfigured ? "ready" : unconfiguredReason;
   const catalog = managedKeys?.openrouter
     ? await selectableModelCatalog(deps.modelCredentialFetch)
     : builtInModelCatalog();
@@ -892,7 +904,8 @@ async function getSurfaceConfig(ctx: ApiCtx): Promise<void> {
     webuiModels: configuredPicker.length ? configuredPicker : allowed,
     baseModel: resolvedBase,
     harnessId,
-    ...(servingProviders ? { modelProviderConfigured: Object.values(servingProviders).some(Boolean) } : {}),
+    ...(modelProviderConfigured !== null ? { modelProviderConfigured } : {}),
+    ...(modelProviderReason !== null ? { modelProviderReason } : {}),
     externalSlackParticipants,
     ...(Object.keys(resolvedBranding).length ? { branding: resolvedBranding } : {}),
   });
@@ -933,7 +946,8 @@ async function runtimeConfigBody(ctx: ApiCtx, scope: ScopeId): Promise<Record<st
       : { harnessId: firstApproved, modelId: defaultModelForHarness(firstApproved, fallback.modelId) };
   const configuredKeys = ctx.deps.providerKeys ?? ALL_PROVIDERS_AVAILABLE;
   const managedKeys = ctx.deps.modelCredentials ? await ctx.deps.modelCredentials.availability() : configuredKeys;
-  const providersFor = (harnessId: string) => modelProviderAvailabilityFor(harnessId, configuredKeys, managedKeys);
+  const providersFor = (harnessId: string) =>
+    modelProviderAvailabilityFor(harnessId, configuredKeys, managedKeys, ctx.deps.cliCredentials);
   const catalog =
     ctx.deps.modelCredentials && managedKeys.openrouter
       ? await selectableModelCatalog(ctx.deps.modelCredentialFetch)

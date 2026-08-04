@@ -1,4 +1,11 @@
-import { baseModelProviders, configuredModelForHarness, loadConfig, providerKeysPresent } from "./config.ts";
+import {
+  baseModelProviders,
+  claudeCliKeylessCredential,
+  codexCliKeylessCredential,
+  configuredModelForHarness,
+  loadConfig,
+  providerKeysPresent,
+} from "./config.ts";
 import { buildApp, stopWithBackstop } from "./wiring.ts";
 import { createServer } from "./api/server.ts";
 import { errMessage } from "./util/errors.ts";
@@ -30,8 +37,12 @@ const server = createServer(built.app, {
     configuredModelForHarness(config, config.harness),
     baseModelProviders(config),
   ),
-  modelProviders: modelProviderAvailabilityFor(config.harness, providerKeysPresent(config)),
+  modelProviders: modelProviderAvailabilityFor(config.harness, providerKeysPresent(config), undefined, {
+    claude: claudeCliKeylessCredential(config),
+    codex: codexCliKeylessCredential(config),
+  }),
   providerKeys: providerKeysPresent(config),
+  cliCredentials: { claude: claudeCliKeylessCredential(config), codex: codexCliKeylessCredential(config) },
   modelCredentials: built.modelCredentials,
   ...(config.brandingDefault ? { brandingDefault: config.brandingDefault } : {}),
   harnessId: config.harness,

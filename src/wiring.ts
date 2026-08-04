@@ -1,7 +1,14 @@
 import { mkdirSync } from "node:fs";
 import { randomBytes, randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
-import { baseModelProviders, configuredModelForHarness, providerKeysPresent, type Config } from "./config.ts";
+import {
+  baseModelProviders,
+  claudeCliKeylessCredential,
+  codexCliKeylessCredential,
+  configuredModelForHarness,
+  providerKeysPresent,
+  type Config,
+} from "./config.ts";
 import { createIdentityService, type DeactivationRecord, type IdentityService } from "./identity/identity-service.ts";
 import {
   createMemoryConfigStore,
@@ -1074,6 +1081,10 @@ export function buildApp(
     ? createPostgresAckEmojiPickStore(config.databaseUrl)
     : createMemoryAckEmojiPickStore();
   const providerKeys = providerKeysPresent(config);
+  const cliCredentials = {
+    claude: claudeCliKeylessCredential(config),
+    codex: codexCliKeylessCredential(config),
+  };
   const app = createApp({
     identity,
     ...(config.publicWebUrl ? { publicWebUrl: config.publicWebUrl } : {}),
@@ -1124,7 +1135,8 @@ export function buildApp(
     harnessId: config.harness,
     runtimeFallback: fallback,
     providerKeys,
-    modelProviders: modelProviderAvailabilityFor(config.harness, providerKeys),
+    cliCredentials,
+    modelProviders: modelProviderAvailabilityFor(config.harness, providerKeys, undefined, cliCredentials),
     runWaitMs: config.runWaitMs,
   });
   const slackCore = createSlackCoreClient({

@@ -86,7 +86,7 @@ import type { DeploySecretPutInput, DeploySecretRef, DeploySecretView } from "..
 import { type DurableMap } from "../persistence/durable-map.ts";
 import type { AdvisoryLock } from "../persistence/advisory-lock.ts";
 import type { Environment, EnvironmentAttachment, EnvironmentStore } from "../environments/environment-store.ts";
-import type { ModelProviderAvailability } from "../model/pi-models.ts";
+import type { CliHarnessCredentials, ModelProviderAvailability } from "../model/pi-models.ts";
 import type { RuntimeChoice } from "../harness/harness-router.ts";
 import { type ReachOpts, type ReachResolution, type ReachTarget } from "../reach/reach.ts";
 import { type Project, type ProjectStore } from "../projects/project-store.ts";
@@ -499,6 +499,7 @@ export interface AppDeps {
   harnessId?: string;
   modelProviders?: ModelProviderAvailability;
   providerKeys?: ModelProviderAvailability;
+  cliCredentials?: CliHarnessCredentials;
   runtimeFallback?: RuntimeChoice;
 }
 
