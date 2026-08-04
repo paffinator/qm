@@ -16,6 +16,15 @@ import {
   type DeploymentVersion,
 } from "./deploy-store.ts";
 import type { DeployProfile, DeployProvider } from "./deploy-provider.ts";
+import { deployEnvKeyError, isDeployEnvKey } from "./deploy-env.ts";
+import type {
+  DeploySecretPutInput,
+  DeploySecretRef,
+  DeploySecretSource,
+  DeploySecretStore,
+  DeploySecretView,
+} from "./deploy-secrets.ts";
+import { APP_DATABASE_ENV, type AppDatabase } from "./app-database.ts";
 import { createNoopLeaderLease, type LeaderLease } from "../persistence/leader-lease.ts";
 import { createNoopAdvisoryLock, type AdvisoryLock } from "../persistence/advisory-lock.ts";
 import { createKeyedQueue } from "../util/async.ts";
@@ -35,6 +44,7 @@ export interface DeployInput {
   homeFiles?: DeployFile[];
   name?: string;
   env?: Record<string, string>;
+  authEnv?: Record<string, string>;
 }
 
 export type Reach = { status: "ok"; endpoint: DeployEndpoint } | { status: "denied" } | { status: "not_found" };
@@ -47,6 +57,7 @@ export interface DeployOrUpdateInput {
   files?: DeployFile[];
   homeFiles?: DeployFile[];
   env?: Record<string, string>;
+  authEnv?: Record<string, string>;
   renameFrom?: string;
   rollbackTo?: number;
   share?: Array<{ scope: ScopeId; permission: Permission }>;
@@ -61,9 +72,21 @@ export interface ReachOptions {
 export interface DeployService {
   readonly providerProfile: DeployProfile;
   deploy(input: DeployInput): Promise<Deployment>;
+  restartDeployment(id: string): Promise<void>;
+  listSecrets(idOrName: string): Promise<DeploySecretView[]>;
+  setSecret(input: DeploySecretPutInput): Promise<DeploySecretView>;
+  deleteSecret(deploymentId: string, envKey: string): Promise<boolean>;
+  secretsUsingCredential(credentialId: string): Promise<DeploySecretRef[]>;
+  purgeSecretsForCredential(credentialId: string): Promise<DeploySecretRef[]>;
   redeploy(
     id: string,
-    input: { entrypoint: string; files: DeployFile[]; homeFiles?: DeployFile[]; env?: Record<string, string> },
+    input: {
+      entrypoint: string;
+      files: DeployFile[];
+      homeFiles?: DeployFile[];
+      env?: Record<string, string>;
+      authEnv?: Record<string, string>;
+    },
   ): Promise<Deployment>;
   getDeployment(idOrName: string): Promise<Deployment | null>;
   listDeployments(): Promise<Deployment[]>;
@@ -103,6 +126,9 @@ export interface DeployServiceDeps {
   deployDir: string;
   auditLog: AuditLog;
   acl: AclStore;
+  secrets?: DeploySecretStore;
+  appDatabase?: AppDatabase;
+  credentialFingerprints?: () => Promise<Array<{ id: string; fingerprint: string }>>;
   leaderLease?: LeaderLease;
   advisoryLock?: AdvisoryLock;
   canReadScope?: (principalId: string, scopeId: ScopeId) => Promise<boolean>;
@@ -142,6 +168,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
     fromVersion?: number,
   ): Promise<DeployEndpoint> => {
     const d = (await deps.deployStore.get(id))!;
+    await deps.appDatabase?.ensure(id);
     let endpoint: DeployEndpoint;
     if (deps.provider.reconcile && version.commit) {
       const diff = await deps.deployStore.diffVersions(id, fromVersion, version.version);
@@ -312,8 +339,175 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
     }
   }
 
+  const matchKeychainCredential = async (value: string): Promise<string | undefined> => {
+    if (!deps.credentialFingerprints || !deps.secrets) return undefined;
+    const fingerprint = deps.secrets.fingerprintOf(value);
+    const known = await deps.credentialFingerprints().catch((e) => {
+      swallow("deploy: keychain fingerprint lookup", e);
+      return [];
+    });
+    return known.find((c) => c.fingerprint === fingerprint)?.id;
+  };
+
+  const persistPublishedSecrets = async (
+    deploymentId: string,
+    input: { env?: Record<string, string>; authEnv?: Record<string, string> },
+    setBy: string,
+  ): Promise<void> => {
+    if (!deps.secrets) return;
+    const groups: Array<[Record<string, string> | undefined, DeploySecretSource]> = [
+      [input.env, "publish"],
+      [input.authEnv, "layer"],
+    ];
+    for (const [env, source] of groups) {
+      for (const [envKey, value] of Object.entries(env ?? {})) {
+        if (!isDeployEnvKey(envKey)) throw new Error(deployEnvKeyError(envKey));
+        if (envKey === APP_DATABASE_ENV) {
+          throw new Error(`${APP_DATABASE_ENV} is provisioned by the platform and cannot be published as an env var`);
+        }
+        const credentialId = await matchKeychainCredential(value);
+        const { changed, created } = await deps.secrets.put({
+          deploymentId,
+          envKey,
+          value,
+          source,
+          setBy,
+          ...(credentialId ? { credentialId } : {}),
+        });
+        if (changed) {
+          deps.auditLog.record({
+            at: Date.now(),
+            principalId: setBy,
+            action: created ? "deploy.secret.set" : "deploy.secret.rotate",
+            resource: `${deploymentRef(deploymentId)}:${envKey}`,
+            scopeLabel: source,
+          });
+          if (credentialId) {
+            deps.auditLog.record({
+              at: Date.now(),
+              principalId: setBy,
+              action: "deploy.secret.credential_baked",
+              resource: `${deploymentRef(deploymentId)}:${envKey}`,
+              scopeLabel: source,
+              detail: credentialId,
+            });
+          }
+        }
+      }
+    }
+  };
+
+  const resolveDeployment = async (idOrName: string): Promise<Deployment> => {
+    const d = (await deps.deployStore.get(idOrName)) ?? (await deps.deployStore.getByName(idOrName));
+    if (!d) throw new Error(`no such app: ${idOrName}`);
+    return d;
+  };
+
   return {
-    providerProfile: deps.provider.profile,
+    providerProfile: {
+      ...deps.provider.profile,
+      ...(deps.appDatabase ? { databaseUrlEnv: deps.appDatabase.envVar } : {}),
+    },
+
+    async restartDeployment(id) {
+      await withDeployLock(id, async () => {
+        const d = await deps.deployStore.get(id);
+        if (!d || d.status !== "running") return;
+        const version = d.versions.find((v) => v.version === d.currentVersion);
+        if (!version) return;
+        const endpoint = await applyVersion(id, version, d.appliedVersion ?? d.currentVersion);
+        await markVersionRunning(id, version.version, endpoint);
+        deps.auditLog.record({
+          at: Date.now(),
+          principalId: d.createdBy,
+          action: "deploy_restart",
+          resource: `${deploymentRef(id)}@v${version.version}`,
+          scopeLabel: d.ownerScopeId,
+        });
+      });
+    },
+
+    async listSecrets(idOrName) {
+      if (!deps.secrets) return [];
+      const d = await resolveDeployment(idOrName);
+      return deps.secrets.list(d.id);
+    },
+
+    async setSecret(input) {
+      if (!deps.secrets) throw new Error("app secrets are not configured (CONNECTOR_SECRET_KEY is unset)");
+      if (!isDeployEnvKey(input.envKey)) throw new Error(deployEnvKeyError(input.envKey));
+      if (input.envKey === APP_DATABASE_ENV && input.source !== "provision") {
+        throw new Error(`${APP_DATABASE_ENV} is provisioned by the platform and cannot be set directly`);
+      }
+      const d = await resolveDeployment(input.deploymentId);
+      const credentialId = input.credentialId ?? (await matchKeychainCredential(input.value));
+      const { view, changed, created } = await deps.secrets.put({
+        ...input,
+        deploymentId: d.id,
+        ...(credentialId ? { credentialId } : {}),
+      });
+      if (changed) {
+        deps.auditLog.record({
+          at: Date.now(),
+          principalId: input.setBy,
+          action: created ? "deploy.secret.set" : "deploy.secret.rotate",
+          resource: `${deploymentRef(d.id)}:${input.envKey}`,
+          scopeLabel: d.ownerScopeId,
+        });
+        if (credentialId) {
+          deps.auditLog.record({
+            at: Date.now(),
+            principalId: input.setBy,
+            action: "deploy.secret.credential_baked",
+            resource: `${deploymentRef(d.id)}:${input.envKey}`,
+            scopeLabel: d.ownerScopeId,
+            detail: credentialId,
+          });
+        }
+        await this.restartDeployment(d.id);
+      }
+      return view;
+    },
+
+    async secretsUsingCredential(credentialId) {
+      return (await deps.secrets?.usingCredential(credentialId)) ?? [];
+    },
+
+    async purgeSecretsForCredential(credentialId) {
+      if (!deps.secrets) return [];
+      const refs = await deps.secrets.usingCredential(credentialId);
+      for (const ref of refs) {
+        if (!(await deps.secrets.remove(ref.deploymentId, ref.envKey))) continue;
+        const d = await deps.deployStore.get(ref.deploymentId);
+        deps.auditLog.record({
+          at: Date.now(),
+          principalId: d?.createdBy ?? "system",
+          action: "deploy.secret.revoked_with_credential",
+          resource: `${deploymentRef(ref.deploymentId)}:${ref.envKey}`,
+          scopeLabel: d?.ownerScopeId ?? ref.deploymentId,
+          detail: credentialId,
+        });
+        await this.restartDeployment(ref.deploymentId);
+      }
+      return refs;
+    },
+
+    async deleteSecret(deploymentId, envKey) {
+      if (!deps.secrets) return false;
+      const d = await resolveDeployment(deploymentId);
+      const removed = await deps.secrets.remove(d.id, envKey);
+      if (removed) {
+        deps.auditLog.record({
+          at: Date.now(),
+          principalId: d.createdBy,
+          action: "deploy.secret.delete",
+          resource: `${deploymentRef(d.id)}:${envKey}`,
+          scopeLabel: d.ownerScopeId,
+        });
+        await this.restartDeployment(d.id);
+      }
+      return removed;
+    },
 
     async deploy(input) {
       if (input.name !== undefined) {
@@ -331,8 +525,8 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
         ...(homeDir ? { homeDir } : {}),
         ...(input.name !== undefined ? { name: input.name } : {}),
         ...(input.createdInScope !== undefined ? { createdInScope: input.createdInScope } : {}),
-        ...(input.env ? { env: input.env } : {}),
       });
+      await persistPublishedSecrets(d.id, input, input.createdBy);
       const endpoint = await applyVersion(d.id, d.versions[0]!);
       await markVersionRunning(d.id, d.versions[0]!.version, endpoint);
       deps.auditLog.record({
@@ -355,10 +549,10 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
           snapshotDir,
           files: input.files,
           ...(homeDir ? { homeDir } : {}),
-          ...(input.env ? { env: input.env } : {}),
         });
         const d = await deps.deployStore.get(id);
         if (!d) throw new Error(`unknown deployment: ${id}`);
+        await persistPublishedSecrets(id, input, d.createdBy);
         const endpoint = await applyVersion(id, v, before?.appliedVersion ?? before?.currentVersion);
         await markVersionRunning(id, v.version, endpoint);
         deps.auditLog.record({
@@ -578,6 +772,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
             files: input.files,
             ...(input.homeFiles ? { homeFiles: input.homeFiles } : {}),
             ...(input.env ? { env: input.env } : {}),
+            ...(input.authEnv ? { authEnv: input.authEnv } : {}),
           });
           if (input.defaultAudience)
             await reconcileDefaultAudience((await deps.deployStore.get(existing.id))!, input.defaultAudience, false);
@@ -614,6 +809,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
           files,
           ...(input.homeFiles ? { homeFiles: input.homeFiles } : {}),
           ...(input.env ? { env: input.env } : {}),
+          ...(input.authEnv ? { authEnv: input.authEnv } : {}),
         });
         isCreate = false;
       } else {
@@ -626,6 +822,7 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.createdInScope !== undefined ? { createdInScope: input.createdInScope } : {}),
           ...(input.env ? { env: input.env } : {}),
+          ...(input.authEnv ? { authEnv: input.authEnv } : {}),
         });
         isCreate = true;
       }
@@ -704,6 +901,16 @@ export function createDeployService(deps: DeployServiceDeps): DeployService {
       );
       await deps.deployStore.setOwnerScope(d.id, toScope);
       for (const g of prior) await deps.acl.revoke(fromScope, ref, g.granteeScopeId, oldOwnerId, d.createdBy);
+      for (const inherited of (await deps.secrets?.reassign(d.id, fromScope)) ?? []) {
+        deps.auditLog.record({
+          at: Date.now(),
+          principalId: actor.callerId,
+          action: "deploy.secret.inherit",
+          resource: `${ref}:${inherited.envKey}`,
+          scopeLabel: toScope,
+          detail: fromScope,
+        });
+      }
       deps.auditLog.record({
         at: Date.now(),
         principalId: actor.callerId,

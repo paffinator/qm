@@ -37,6 +37,24 @@ import {
   type DeploymentView,
 } from "./deploy-view";
 
+export interface DeploySecretView {
+  envKey: string;
+  digest: string;
+  source: "provision" | "publish" | "web" | "layer" | "legacy";
+  setBy: string;
+  updatedAt: number;
+  credentialId?: string;
+  inheritedFrom?: string;
+}
+
+const SECRET_SOURCE_LABEL: Record<DeploySecretView["source"], string> = {
+  provision: "Provisioned by qm",
+  publish: "Set by the agent",
+  web: "Set here",
+  layer: "Injected by your org",
+  legacy: "Imported from an older version",
+};
+
 const DEPLOY_TABS: Array<{ value: DeploymentTab; label: string }> = [
   { value: "yours", label: "Yours" },
   { value: "shared", label: "Shared" },
@@ -56,6 +74,8 @@ let activeDeploy: DeploymentView | null = null;
 let editingDeploy: { id: string; field: "displayName" | "name" } | null = null;
 let deployDraft = "";
 let deploySaving = false;
+let deploySecrets: { id: string; loading: boolean; items: DeploySecretView[]; error: string } | null = null;
+let secretDraftKey: string | null = null;
 let archiveCandidate: DeploymentView | null = null;
 let archiveFocusTarget: { id: string; detail: boolean } | null = null;
 let deployToast: { deployment: DeploymentView; text: string; undo?: boolean } | null = null;
@@ -343,12 +363,15 @@ async function openDeploy(d: DeploymentView): Promise<void> {
   deployDraft = "";
   deployNotices = withoutDeploymentDetailNotice(deployNotices);
   activeDeploy = d;
+  deploySecrets = null;
+  secretDraftKey = null;
   drawDeployDetail(d, true);
   try {
     const response = await api<{ deployment?: DeploymentView }>(`/api/deployments/${encodeURIComponent(d.id)}`);
     if (appState.currentView !== "deploys" || activeDeploy?.id !== d.id) return;
     activeDeploy = response.deployment ?? d;
     drawDeployDetail(activeDeploy);
+    void loadDeploySecrets(activeDeploy);
   } catch (error) {
     if (activeDeploy?.id !== d.id) return;
     deployNotices = withDeploymentDetailNotice(deployNotices, d.id, errMessage(error, "Could not load app details."));
@@ -480,6 +503,8 @@ function drawDeployDetail(d: DeploymentView, loading = false): void {
               </section>`
             : nothing
         }
+
+        ${canManage(d) ? deploySecretsSection(d) : nothing}
 
         <section class="deploy-detail-section">
           <h3>Version history</h3>
@@ -761,6 +786,133 @@ async function archiveDeploy(d: DeploymentView): Promise<void> {
       drawCurrentDeployView();
     }
   }
+}
+
+async function loadDeploySecrets(d: DeploymentView): Promise<void> {
+  if (!canManage(d)) return;
+  deploySecrets = { id: d.id, loading: true, items: deploySecrets?.id === d.id ? deploySecrets.items : [], error: "" };
+  drawDeployDetail(d);
+  try {
+    const response = await api<{ secrets?: DeploySecretView[] }>(
+      `/api/deployments/${encodeURIComponent(d.id)}/secrets`,
+    );
+    deploySecrets = { id: d.id, loading: false, items: response.secrets ?? [], error: "" };
+  } catch (e) {
+    deploySecrets = { id: d.id, loading: false, items: [], error: errMessage(e) };
+  }
+  if (activeDeploy?.id === d.id) drawDeployDetail(activeDeploy);
+}
+
+async function addDeploySecret(d: DeploymentView): Promise<void> {
+  const envKey = (secretDraftKey ?? "").trim();
+  if (!envKey || deploySaving) return;
+  deploySaving = true;
+  drawDeployDetail(d);
+  try {
+    const response = await api<{ url?: string }>(`/api/deployments/${encodeURIComponent(d.id)}/secrets/drop`, {
+      method: "POST",
+      body: JSON.stringify({ envKey }),
+    });
+    deploySaving = false;
+    secretDraftKey = null;
+    if (response.url) window.open(response.url, "_blank", "noopener");
+    deployNotices = withDeploymentDetailNotice(
+      deployNotices,
+      d.id,
+      `Opened a secure form for ${envKey}. Once you submit it, the app restarts with the new value.`,
+    );
+  } catch (e) {
+    deploySaving = false;
+    deployNotices = withDeploymentDetailNotice(deployNotices, d.id, errMessage(e));
+  }
+  if (activeDeploy?.id === d.id) drawDeployDetail(activeDeploy);
+}
+
+async function deleteDeploySecret(d: DeploymentView, envKey: string): Promise<void> {
+  if (deploySaving) return;
+  deploySaving = true;
+  drawDeployDetail(d);
+  try {
+    await api(`/api/deployments/${encodeURIComponent(d.id)}/secrets/${encodeURIComponent(envKey)}`, {
+      method: "DELETE",
+    });
+    deploySaving = false;
+    deployNotices = withDeploymentDetailNotice(deployNotices, d.id, `Removed ${envKey}. The app restarted without it.`);
+  } catch (e) {
+    deploySaving = false;
+    deployNotices = withDeploymentDetailNotice(deployNotices, d.id, errMessage(e));
+  }
+  await loadDeploySecrets(d);
+}
+
+function deploySecretsSection(d: DeploymentView): TemplateResult {
+  const state = deploySecrets?.id === d.id ? deploySecrets : null;
+  return html`<section class="deploy-detail-section">
+    <h3>Secrets</h3>
+    <p class="hint">
+      Environment variables for this app — API keys and the like. Values are write-only: nobody, including the agent,
+      can read one back here. Setting or removing one restarts the app.
+    </p>
+    ${deploySecretRows(d, state)}
+    <div class="deploy-setting-row">
+      <div><strong>Add a secret</strong><span>You will be sent to a secure form to paste the value.</span></div>
+      <div class="deploy-setting-value">
+        <input
+          type="text"
+          placeholder="API_KEY"
+          .value=${live(secretDraftKey ?? "")}
+          @input=${(e: Event) => {
+            secretDraftKey = (e.target as HTMLInputElement).value;
+          }}
+        />
+        <button class="btn" type="button" ?disabled=${deploySaving} @click=${() => void addDeploySecret(d)}>
+          Continue
+        </button>
+      </div>
+    </div>
+  </section>`;
+}
+
+type DeploySecretsState = { id: string; loading: boolean; items: DeploySecretView[]; error: string } | null;
+
+function deploySecretRows(d: DeploymentView, state: DeploySecretsState): TemplateResult {
+  if (state?.error) return html`<div class="empty compact">${state.error}</div>`;
+  if (!state || state.loading) return html`<div class="empty compact">Loading…</div>`;
+  if (!state.items.length) return html`<div class="empty compact">No secrets set.</div>`;
+  return html`<div class="deploy-version-list">
+    ${state.items.map(
+      (s) => html`
+        <div class="deploy-version-row">
+          <div>
+            <strong><code>${s.envKey}</code></strong><span class="badge">${SECRET_SOURCE_LABEL[s.source]}</span
+            >${s.credentialId ? html`<span class="badge">From a keychain credential</span>` : nothing}
+          </div>
+          <div>
+            <code title="A salted digest, not the value">${s.digest}</code><span>${relTime(s.updatedAt)}</span>
+            <button
+              class="btn"
+              type="button"
+              ?disabled=${deploySaving}
+              @click=${() => {
+                secretDraftKey = s.envKey;
+                void addDeploySecret(d);
+              }}
+            >
+              Rotate
+            </button>
+            <button
+              class="btn danger"
+              type="button"
+              ?disabled=${deploySaving}
+              @click=${() => void deleteDeploySecret(d, s.envKey)}
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      `,
+    )}
+  </div>`;
 }
 
 async function restoreDeploy(d: DeploymentView): Promise<void> {

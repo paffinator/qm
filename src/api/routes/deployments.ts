@@ -16,7 +16,10 @@ import { verifyPortalIdentity, PORTAL_IDENTITY_HEADER } from "../../auth/portal-
 import { audit, authorizeAdmin, isObj, orgScope } from "./shared.ts";
 import { parseScopeId, scopeId, type Permission } from "../../types.ts";
 import type { ApiCtx, BaseCtx, Route } from "./route.ts";
-import { CONFIG_DEFAULTS } from "../../config.ts";
+import { CONFIG_DEFAULTS, orgId as configOrgId } from "../../config.ts";
+import { mintCapabilityToken, SECRET_DROP_AUD } from "../../auth/capability-token.ts";
+import { SECRET_DROP_TTL_MS } from "../../credentials/secret-drop.ts";
+import { deployEnvKeyError, isDeployEnvKey } from "../../deploy/deploy-env.ts";
 import { resolveShareTarget as resolveShareTargetGrammar } from "../artifact-share.ts";
 import { mintDeployOwnerToken, verifyDeployGitAccess, verifyDeployOwnerToken } from "../../deploy/access-token.ts";
 import { EDIT_WIDGET_JS, EDIT_WIDGET_PATH_PREFIX, editWidgetTag } from "../../deploy/edit-widget.ts";
@@ -888,7 +891,7 @@ async function createDeployment(ctx: ApiCtx): Promise<void> {
   const principalId = ctx.capability?.actorId ?? ctx.actor?.p;
   if (principalId && body.createdBy !== principalId) return sendJson(res, 403, { error: "forbidden" });
   try {
-    return sendJson(res, 200, { deployment: await app.deploy(body) });
+    return sendJson(res, 200, { deployment: deploymentView(await app.deploy(body)) });
   } catch (e) {
     return sendJson(res, 400, { error: "deploy_failed", message: errMessage(e) });
   }
@@ -953,7 +956,9 @@ async function redeployDeployment(ctx: ApiCtx): Promise<void> {
     return sendJson(res, 400, { error: "bad_request", message: "entrypoint (string) and files (array) required" });
   }
   try {
-    return sendJson(res, 200, { deployment: await app.redeploy(id, { entrypoint: b.entrypoint, files: b.files }) });
+    return sendJson(res, 200, {
+      deployment: deploymentView(await app.redeploy(id, { entrypoint: b.entrypoint, files: b.files })),
+    });
   } catch (e) {
     return sendJson(res, 400, { error: "deploy_failed", message: errMessage(e) });
   }
@@ -962,6 +967,95 @@ async function redeployDeployment(ctx: ApiCtx): Promise<void> {
 async function callerMayManageDeployment(ctx: ApiCtx, id: string): Promise<boolean> {
   const principalId = ctx.capability?.actorId ?? ctx.actor?.p;
   return !principalId || ctx.app.canManageDeployment(id, principalId, ctx.capability?.scopeId);
+}
+
+export async function listDeploymentSecrets(ctx: ApiCtx): Promise<void> {
+  const { res, app, params } = ctx;
+  const id = await deploymentId(app, params.id!);
+  if (!id) return sendJson(res, 404, { error: "not_found" });
+  if (!(await callerMayManageDeployment(ctx, id)))
+    return sendJson(res, 403, { error: "forbidden", message: "only someone who manages this app can see its secrets" });
+  return sendJson(res, 200, { secrets: await app.listDeploymentSecrets(id) });
+}
+
+export async function deleteDeploymentSecret(ctx: ApiCtx): Promise<void> {
+  const { res, app, params } = ctx;
+  const id = await deploymentId(app, params.id!);
+  if (!id) return sendJson(res, 404, { error: "not_found" });
+  if (!(await callerMayManageDeployment(ctx, id)))
+    return sendJson(res, 403, {
+      error: "forbidden",
+      message: "only someone who manages this app can change its secrets",
+    });
+  const envKey = params.envKey;
+  if (!envKey) return sendJson(res, 400, { error: "bad_request", message: "envKey is required" });
+  try {
+    const removed = await app.deleteDeploymentSecret(id, envKey);
+    return sendJson(res, removed ? 200 : 404, removed ? { ok: true } : { error: "not_found" });
+  } catch (e) {
+    return sendJson(res, 400, { error: "secret_delete_failed", message: errMessage(e) });
+  }
+}
+
+export async function mintDeploymentSecretDrop(ctx: ApiCtx): Promise<void> {
+  const { res, app, params, body, deps, secret } = ctx;
+  if (!deps.secretDrops) return sendJson(res, 404, { error: "not_found" });
+  const id = await deploymentId(app, params.id!);
+  if (!id) return sendJson(res, 404, { error: "not_found" });
+  const principalId = ctx.capability?.actorId ?? ctx.actor?.p;
+  if (!principalId) return sendJson(res, 403, { error: "forbidden" });
+  if (!(await callerMayManageDeployment(ctx, id)))
+    return sendJson(res, 403, {
+      error: "forbidden",
+      message: "only someone who manages this app can set its secrets",
+    });
+  const capSecret = deps.capabilitySecret ?? secret;
+  if (!capSecret)
+    return sendJson(res, 500, { error: "misconfigured", message: "no capability secret to bind the drop link with" });
+  const envKey = (body as { envKey?: unknown }).envKey;
+  if (typeof envKey !== "string" || !isDeployEnvKey(envKey)) {
+    return sendJson(res, 400, {
+      error: "bad_request",
+      message: typeof envKey === "string" ? deployEnvKeyError(envKey) : "envKey is required",
+    });
+  }
+  const { dropId } = await deps.secretDrops.mint({
+    ownerId: principalId,
+    orgId: configOrgId(),
+    service: `app:${id}`,
+    sink: { kind: "deployment", deploymentId: id, envKey },
+    envKey,
+    purpose: `set ${envKey} for this app`,
+    requestedBy: principalId,
+    requiresToken: true,
+  });
+  const linkToken = await mintCapabilityToken(
+    {
+      actorId: principalId,
+      scopeId: scopeId("personal", principalId),
+      aud: SECRET_DROP_AUD,
+      drop: dropId,
+      exp: Date.now() + SECRET_DROP_TTL_MS,
+    },
+    capSecret,
+  );
+  const formPath = `/drop/${dropId}/form?t=${encodeURIComponent(linkToken)}`;
+  const base = (deps.portalUrl ?? deps.publicUrl)?.replace(/\/$/, "");
+  return sendJson(res, 200, { dropId, formPath, url: base ? `${base}${formPath}` : formPath });
+}
+
+export async function restartDeployment(ctx: ApiCtx): Promise<void> {
+  const { res, app, params } = ctx;
+  const id = await deploymentId(app, params.id!);
+  if (!id) return sendJson(res, 404, { error: "not_found" });
+  if (!(await callerMayManageDeployment(ctx, id)))
+    return sendJson(res, 403, { error: "forbidden", message: "only someone who manages this app can restart it" });
+  try {
+    await app.restartDeployment(id);
+    return sendJson(res, 200, { ok: true });
+  } catch (e) {
+    return sendJson(res, 400, { error: "restart_failed", message: errMessage(e) });
+  }
 }
 
 export async function archiveDeployment(ctx: ApiCtx): Promise<void> {
@@ -1121,4 +1215,8 @@ export const deploymentRoutes: ReadonlyArray<Route<ApiCtx>> = [
   { method: "POST", path: "/v1/deployments/:id/restore", auth: "either", handle: restoreDeployment },
   { method: "POST", path: "/v1/deployments/:id/name", auth: "either", handle: renameDeployment },
   { method: "POST", path: "/v1/deployments/:id/display-name", auth: "either", handle: setDeploymentDisplayName },
+  { method: "GET", path: "/v1/deployments/:id/secrets", auth: "source", handle: listDeploymentSecrets },
+  { method: "DELETE", path: "/v1/deployments/:id/secrets/:envKey", auth: "source", handle: deleteDeploymentSecret },
+  { method: "POST", path: "/v1/deployments/:id/restart", auth: "source", handle: restartDeployment },
+  { method: "POST", path: "/v1/deployments/:id/secrets/drop", auth: "source", handle: mintDeploymentSecretDrop },
 ];

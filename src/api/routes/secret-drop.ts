@@ -1,13 +1,18 @@
 import { orgId as configOrgId } from "../../config.ts";
 import { mintCapabilityToken, verifyCapabilityToken, SECRET_DROP_AUD } from "../../auth/capability-token.ts";
 import { KeychainError, type GrantMode } from "../../credentials/keychain.ts";
-import { SECRET_DROP_TTL_MS, type SecretDropField, type SecretDropRecord } from "../../credentials/secret-drop.ts";
+import {
+  SECRET_DROP_TTL_MS,
+  type SecretDropField,
+  type SecretDropRecord,
+  type SecretDropSink,
+} from "../../credentials/secret-drop.ts";
 import { isSharedScope, parseScopeId } from "../../types.ts";
 import { samePerson } from "../../directory/person.ts";
 import { escapeHtml, sendJson } from "../http.ts";
 import type { ApiCtx, Route } from "./route.ts";
 import { audit, resolveCapabilityDestination } from "./shared.ts";
-import { swallow } from "../../util/errors.ts";
+import { errMessage, swallow } from "../../util/errors.ts";
 
 const TRIGGERED = "secret-drop links can only be minted on a turn a person sent — this turn was fired by a trigger";
 
@@ -68,7 +73,13 @@ async function dropLinkTokenOk(ctx: ApiCtx, dropId: string, rec: SecretDropRecor
 
 function dropFormHtml(
   dropId: string,
-  rec: { service: string; purpose: string; fields?: SecretDropField[]; createdAt?: number } | null,
+  rec: {
+    service: string;
+    purpose: string;
+    fields?: SecretDropField[];
+    createdAt?: number;
+    sink?: SecretDropSink;
+  } | null,
 ): string {
   if (!rec) {
     return `<!doctype html><meta charset=utf-8><title>Secret drop</title><body ${PAGE_STYLE}>
@@ -87,16 +98,27 @@ function dropFormHtml(
     )
     .join("\n");
   const keys = JSON.stringify(fields.map((f) => f.key));
-  return `<!doctype html><meta charset=utf-8><title>Provide a credential</title><body ${PAGE_STYLE}>
-<h2>Provide your ${service_} ${multi ? "login" : "credential"}</h2>
-<p style="color:#555">The agent asked for this so it can: <b>${purpose_}</b>${requested_ ? ` <span style="color:#999">(requested ${requested_})</span>` : ""}</p>
+  const destination_ =
+    rec.sink?.kind === "deployment"
+      ? "What you enter goes straight to this app's encrypted secret store over TLS. It is never shown in chat, and no one — including the agent — can read it back. Saving it restarts the app. This link works once."
+      : "What you enter goes straight to the keychain over TLS and is encrypted at rest. It is never shown in chat. This link works once.";
+  const deploymentSink = rec.sink?.kind === "deployment" ? rec.sink : null;
+  const heading_ = deploymentSink
+    ? `Set <code>${escapeHtml(deploymentSink.envKey)}</code> for your app`
+    : `Provide your ${service_} ${multi ? "login" : "credential"}`;
+  const lede_ = deploymentSink
+    ? `<p style="color:#555">This value becomes an environment variable in your published app.</p>`
+    : `<p style="color:#555">The agent asked for this so it can: <b>${purpose_}</b>${requested_ ? ` <span style="color:#999">(requested ${requested_})</span>` : ""}</p>`;
+  return `<!doctype html><meta charset=utf-8><title>${deploymentSink ? "Set an app secret" : "Provide a credential"}</title><body ${PAGE_STYLE}>
+<h2>${heading_}</h2>
+${lede_}
 <form id=f>
 ${inputs}
 <button id=go style="font-size:1rem;padding:.6rem 1.2rem;margin-top:.2rem">Submit securely</button>
 </form>
 <p id=done></p>
-<p style="color:#888;font-size:.85rem">What you enter goes straight to the keychain over TLS and is encrypted at rest. It is never shown in chat. This link works once.</p>
-<script>const f=document.getElementById('f'),keys=${keys};f.onsubmit=async(e)=>{e.preventDefault();const inputs=[...f.querySelectorAll('input')];const go=document.getElementById('go');go.disabled=true;let body;if(keys.length===1&&keys[0]===null){body={secret:inputs[0].value};}else{const values={};inputs.forEach((el,i)=>{values[keys[i]]=el.value;});body={values};}const r=await fetch('/drop/'+encodeURIComponent(${id_})+location.search,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});inputs.forEach(el=>el.value='');if(r.ok){f.remove();document.getElementById('done').textContent='Received — you can close this tab and return to the conversation.';}else{document.getElementById('done').textContent='Could not save (the link may have expired, been used, or was missing a field).';go.disabled=false;}};</script>
+<p style="color:#888;font-size:.85rem">${destination_}</p>
+<script>const f=document.getElementById('f'),keys=${keys};f.onsubmit=async(e)=>{e.preventDefault();const inputs=[...f.querySelectorAll('input')];const go=document.getElementById('go');go.disabled=true;let body;if(keys.length===1&&keys[0]===null){body={secret:inputs[0].value};}else{const values={};inputs.forEach((el,i)=>{values[keys[i]]=el.value;});body={values};}const r=await fetch('/drop/'+encodeURIComponent(${id_})+location.search,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});inputs.forEach(el=>el.value='');if(r.ok){f.remove();document.getElementById('done').textContent='Saved — you can close this tab.';}else{document.getElementById('done').textContent='Could not save (the link may have expired, been used, or was missing a field).';go.disabled=false;}};</script>
 </body>`;
 }
 
@@ -203,7 +225,7 @@ async function dropForm(ctx: ApiCtx): Promise<void> {
 
 async function redeemDrop(ctx: ApiCtx): Promise<void> {
   const { res, deps, body, params, req } = ctx;
-  if (!deps.keychain || !deps.secretDrops) return sendJson(res, 404, { error: "not_found" });
+  if (!deps.secretDrops) return sendJson(res, 404, { error: "not_found" });
   const { secret, values } = body as { secret?: unknown; values?: unknown };
   const peeked = await deps.secretDrops.peek(params.id!);
   if (!peeked.ok) {
@@ -257,6 +279,37 @@ async function redeemDrop(ctx: ApiCtx): Promise<void> {
   const drop = redeemed.rec;
   if (drop.orgId !== undefined && drop.orgId !== configOrgId())
     return sendJson(res, 404, { error: "not_found", message: "this drop link is for a different org" });
+  if (drop.sink?.kind === "deployment") {
+    if (saveFields || typeof secret !== "string") {
+      return sendJson(res, 400, { error: "bad_request", message: "an app secret is a single value" });
+    }
+    const { deploymentId, envKey } = drop.sink;
+    if (!(await ctx.app.canManageDeployment(deploymentId, drop.ownerId))) {
+      return sendJson(res, 403, {
+        error: "forbidden",
+        message: "you no longer manage this app, so the secret was not saved",
+      });
+    }
+    try {
+      const view = await ctx.app.setDeploymentSecret({
+        deploymentId,
+        envKey,
+        value: secret,
+        source: "web",
+        setBy: drop.ownerId,
+      });
+      audit(deps, {
+        principalId: drop.ownerId,
+        action: "keychain.drop.redeem",
+        resource: `deploy:${deploymentId}:${envKey}`,
+        scopeLabel: drop.ownerId,
+      });
+      return sendJson(res, 200, { ok: true, secret: view });
+    } catch (e) {
+      return sendJson(res, 400, { error: "secret_set_failed", message: errMessage(e) });
+    }
+  }
+  if (!deps.keychain) return sendJson(res, 404, { error: "not_found" });
   try {
     const meta = await deps.keychain.save({
       ownerId: drop.ownerId,

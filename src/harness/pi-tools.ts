@@ -815,6 +815,9 @@ export function createPiTools(ref: ToolContextRef, opts?: PiToolsOptions): ToolD
         const dataNote = r.dataDir
           ? `\nDurable data: runtime state written under ${r.dataDir} ($DATA_DIR) survives restarts and redeploys — keep SQLite at ${r.dataDir}/app.db (it gets the strongest durability the runtime offers). If this app writes runtime state anywhere else on disk, migrate it there (data deliberately baked into the repo stays where it is).`
           : "";
+        const dbNote = r.databaseUrlEnv
+          ? `\nDatabase: $${r.databaseUrlEnv} holds a private Postgres schema for this app — create tables in it directly (unqualified names land in the right place) and prefer it over SQLite for relational state. Keep the connection pool small (1-3); do not CREATE SCHEMA or CREATE EXTENSION. Backups are whatever the operator configured, so don't treat it as the only copy of anything important.`
+          : "";
         return recordResult(
           callId,
           {
@@ -825,8 +828,9 @@ export function createPiTools(ref: ToolContextRef, opts?: PiToolsOptions): ToolD
             url: r.url,
             ...(r.audience ? { audience: r.audience } : {}),
             ...(r.dataDir ? { dataDir: r.dataDir } : {}),
+            ...(r.databaseUrlEnv ? { databaseUrlEnv: r.databaseUrlEnv } : {}),
           },
-          text(`Published ${r.name ?? r.id} (v${r.version}) → ${r.url}\n${reach}${dataNote}`),
+          text(`Published ${r.name ?? r.id} (v${r.version}) → ${r.url}\n${reach}${dbNote}${dataNote}`),
         );
       } catch (e) {
         const msg = errMessage(e);

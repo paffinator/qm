@@ -53,7 +53,27 @@ Give an auto-named deployment a friendly link:
 publish({ renameFrom: "s-1176-p-5050", name: "status-board" })
 ```
 
-`publish` returns `{ id, name, version, url, dataDir? }` — give the user the `url` (`/d/<name>/`).
+`publish` returns `{ id, name, version, url, dataDir?, databaseUrlEnv? }` — give the user the
+`url` (`/d/<name>/`).
+
+## Postgres — the default home for relational state
+
+When the runtime provisions a database it sets `$DATABASE_URL` (and the publish result reports
+`databaseUrlEnv`). That is a **private schema on a shared Postgres**, owned by this app alone.
+
+- **Prefer it over SQLite for anything relational or multi-writer.** There is no snapshot loss
+  window: a committed transaction is committed.
+- **Create tables directly.** `search_path` is already pointed at the app's own schema, so
+  unqualified `CREATE TABLE`/`SELECT` land in the right place. Do **not** `CREATE SCHEMA` or
+  `CREATE EXTENSION` — the app's role is not permitted to, and the attempt will fail.
+- **Keep the pool small — 1 to 3 connections** (`max: 3`). The role has a hard connection limit
+  and the project is shared with every other app.
+- **Other apps can see your table _names_ via the Postgres catalog, never your rows.** Don't
+  read a table name as private.
+- **Backups are whatever the operator configured — possibly none.** Don't treat this as the only
+  copy of anything the user would mourn.
+- **If `$DATABASE_URL` is unset**, the runtime has no database: say so, and fall back to
+  `$DATA_DIR/app.db` below.
 
 ## Durable data — where app state must live
 

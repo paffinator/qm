@@ -9,10 +9,13 @@ export interface SecretDropField {
   secret?: boolean;
 }
 
+export type SecretDropSink = { kind: "keychain" } | { kind: "deployment"; deploymentId: string; envKey: string };
+
 export interface SecretDropRecord {
   ownerId: string;
   orgId?: string;
   service: string;
+  sink?: SecretDropSink;
   envKey?: string;
   host?: string;
   fields?: SecretDropField[];

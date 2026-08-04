@@ -41,7 +41,7 @@ test("addVersion on an unknown deployment throws", async () => {
   await assert.rejects(s.addVersion("nope", { entrypoint: "x", snapshotDir: "/x" }), /unknown deployment/);
 });
 
-test("addVersionFromCommit registers a pushed commit as a new version inheriting entrypoint/env", async () => {
+test("addVersionFromCommit registers a pushed commit as a new version inheriting the entrypoint", async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), "from-commit-"));
   const s = createDeployStore({ git: { repoRoot } });
   const d = await s.create({
@@ -49,7 +49,6 @@ test("addVersionFromCommit registers a pushed commit as a new version inheriting
     createdBy: "U1",
     entrypoint: "node server.js",
     snapshotDir: "/snap/v1",
-    env: { FOO: "bar" },
     files: [{ path: "server.js", data: "1" }],
   });
   await s.setAppliedVersion(d.id, 1);
@@ -68,7 +67,7 @@ test("addVersionFromCommit registers a pushed commit as a new version inheriting
   assert.equal(v2.version, 2);
   assert.equal(v2.commit, pushed);
   assert.equal(v2.entrypoint, "node server.js");
-  assert.deepEqual(v2.env, { FOO: "bar" });
+  assert.equal(v2.env, undefined, "env is never versioned — secrets live in the encrypted store");
   assert.equal((await s.get(d.id))!.currentVersion, 2);
 
   const v2bundle = await s.bundleOf(d.id, 2);

@@ -82,6 +82,7 @@ import type {
   ReachOptions,
   DeploymentGrantee,
 } from "../deploy/deploy-service.ts";
+import type { DeploySecretPutInput, DeploySecretRef, DeploySecretView } from "../deploy/deploy-secrets.ts";
 import { type DurableMap } from "../persistence/durable-map.ts";
 import type { AdvisoryLock } from "../persistence/advisory-lock.ts";
 import type { Environment, EnvironmentAttachment, EnvironmentStore } from "../environments/environment-store.ts";
@@ -435,6 +436,12 @@ export interface App {
   ): Promise<DeploymentGitUrl | null>;
   authorizesDeploymentGitAccess(id: string, principalId: string, permission: "read" | "write"): Promise<boolean>;
   reapIdleDeployments(ttlMs: number, now?: number): Promise<number>;
+  listDeploymentSecrets(idOrName: string): Promise<DeploySecretView[]>;
+  setDeploymentSecret(input: DeploySecretPutInput): Promise<DeploySecretView>;
+  deploymentSecretsUsingCredential(credentialId: string): Promise<DeploySecretRef[]>;
+  purgeDeploymentSecretsForCredential(credentialId: string): Promise<DeploySecretRef[]>;
+  deleteDeploymentSecret(id: string, envKey: string): Promise<boolean>;
+  restartDeployment(id: string): Promise<void>;
   listEnvironments(): Promise<{ environment: Environment; attachments: EnvironmentAttachment[] }[]>;
   createEnvironment(input: { scopeId: ScopeId; name: string; actorId: string }): Promise<Environment>;
   resolveEnvironmentByName(name: string): Promise<Environment | null>;

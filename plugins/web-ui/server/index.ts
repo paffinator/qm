@@ -1362,6 +1362,51 @@ const routeRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return relay(res, r);
     }
 
+    if (method === "GET" && path.startsWith("/api/deployments/") && path.endsWith("/secrets")) {
+      const id = decodeURIComponent(path.slice("/api/deployments/".length, -"/secrets".length));
+      if (!(await gateManageDeployment(res, user, id))) return;
+      return relay(res, await coreFetch("GET", `/v1/deployments/${encodeURIComponent(id)}/secrets`));
+    }
+
+    if (method === "POST" && path.startsWith("/api/deployments/") && path.endsWith("/secrets/drop")) {
+      const id = decodeURIComponent(path.slice("/api/deployments/".length, -"/secrets/drop".length));
+      if (!(await gateManageDeployment(res, user, id))) return;
+      let envKey: string;
+      try {
+        envKey = String((JSON.parse(await readBody(req)) as { envKey?: unknown }).envKey ?? "").trim();
+      } catch {
+        return json(res, 400, { error: "bad_request" });
+      }
+      if (!envKey) return json(res, 400, { error: "bad_request", message: "envKey is required" });
+      const r = await coreFetch(
+        "POST",
+        `/v1/deployments/${encodeURIComponent(id)}/secrets/drop`,
+        JSON.stringify({ envKey }),
+      );
+      return relay(res, r);
+    }
+
+    if (method === "DELETE" && path.startsWith("/api/deployments/") && path.includes("/secrets/")) {
+      const rest = path.slice("/api/deployments/".length);
+      const at = rest.indexOf("/secrets/");
+      const id = decodeURIComponent(rest.slice(0, at));
+      const envKey = decodeURIComponent(rest.slice(at + "/secrets/".length));
+      if (!(await gateManageDeployment(res, user, id))) return;
+      return relay(
+        res,
+        await coreFetch(
+          "DELETE",
+          `/v1/deployments/${encodeURIComponent(id)}/secrets/${encodeURIComponent(envKey)}`,
+        ),
+      );
+    }
+
+    if (method === "POST" && path.startsWith("/api/deployments/") && path.endsWith("/restart")) {
+      const id = decodeURIComponent(path.slice("/api/deployments/".length, -"/restart".length));
+      if (!(await gateManageDeployment(res, user, id))) return;
+      return relay(res, await coreFetch("POST", `/v1/deployments/${encodeURIComponent(id)}/restart`));
+    }
+
     if (method === "POST" && path.startsWith("/api/deployments/") && path.endsWith("/archive")) {
       const id = decodeURIComponent(path.slice("/api/deployments/".length, -"/archive".length));
       if (!(await gateManageDeployment(res, user, id))) return;

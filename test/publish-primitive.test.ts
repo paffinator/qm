@@ -548,8 +548,9 @@ test("publish always splits: bakes NO resident creds, injects the layer's acting
 
   const c = captured()!;
   assert.equal((c.homeFiles ?? []).length, 0, "split bakes no third-party creds and no raw .acmecli");
-  assert.equal(c.env?.ACMECLI_ACTING_SLACK_USER_ID, "U1", "the layer CLI acts AS the originator via env");
-  assert.equal(c.env?.ACMECLI_PLATFORM, "slack");
+  assert.equal(c.authEnv?.ACMECLI_ACTING_SLACK_USER_ID, "U1", "the layer CLI acts AS the originator via env");
+  assert.equal(c.authEnv?.ACMECLI_PLATFORM, "slack");
+  assert.equal(c.env, undefined, "layer-injected auth is attributed separately from published env");
 });
 
 test("publish off-Slack: injects nothing (no acting-as id, no baked creds)", async () => {

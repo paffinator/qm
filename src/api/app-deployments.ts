@@ -31,6 +31,12 @@ export function createDeploymentMethods(
   | "deploymentGitUrlFor"
   | "authorizesDeploymentGitAccess"
   | "reapIdleDeployments"
+  | "listDeploymentSecrets"
+  | "setDeploymentSecret"
+  | "deploymentSecretsUsingCredential"
+  | "purgeDeploymentSecretsForCredential"
+  | "deleteDeploymentSecret"
+  | "restartDeployment"
   | "listEnvironments"
   | "createEnvironment"
   | "resolveEnvironmentByName"
@@ -55,6 +61,24 @@ export function createDeploymentMethods(
     },
     deploymentGrantees(idOrName) {
       return deps.deploy.deploymentGrantees(idOrName);
+    },
+    listDeploymentSecrets(idOrName) {
+      return deps.deploy.listSecrets(idOrName);
+    },
+    setDeploymentSecret(input) {
+      return deps.deploy.setSecret(input);
+    },
+    deploymentSecretsUsingCredential(credentialId) {
+      return deps.deploy.secretsUsingCredential(credentialId);
+    },
+    purgeDeploymentSecretsForCredential(credentialId) {
+      return deps.deploy.purgeSecretsForCredential(credentialId);
+    },
+    deleteDeploymentSecret(id, envKey) {
+      return deps.deploy.deleteSecret(id, envKey);
+    },
+    restartDeployment(id) {
+      return deps.deploy.restartDeployment(id);
     },
     async listDeploymentsForViewer(principalId) {
       const deployments = await deps.deploy.listDeployments();

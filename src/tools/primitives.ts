@@ -98,6 +98,7 @@ interface PublishResult {
   url: string;
   audience?: PublishAudienceDescriptor;
   dataDir?: string;
+  databaseUrlEnv?: string;
 }
 
 export class NeedsApproval extends Error {
@@ -672,7 +673,7 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
             ...(deps.layerAuth ? { layerAuth: deps.layerAuth } : {}),
           })
         : { authEnv: {} };
-      const env = { ...input.env, ...authEnv };
+      const env = input.env;
 
       const pc = deps.publishContext;
       const aud: PublishAudience =
@@ -707,7 +708,8 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
           ...(input.entrypoint ? { entrypoint: input.entrypoint } : {}),
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(input.renameFrom !== undefined ? { renameFrom: input.renameFrom } : {}),
-          ...(Object.keys(env).length ? { env } : {}),
+          ...(env && Object.keys(env).length ? { env } : {}),
+          ...(Object.keys(authEnv).length ? { authEnv } : {}),
           ...(input.rollbackTo !== undefined ? { rollbackTo: input.rollbackTo } : {}),
           ...(doReconcile
             ? {
@@ -734,6 +736,7 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
         const urlBase = deps.publicWebUrl?.replace(/\/$/, "") ?? "";
         const url = publicUrlOf(d.endpoint) ?? `${urlBase}/d/${ref}/`;
         const dataDir = input.entrypoint ? deps.deploy.providerProfile?.dataDir : undefined;
+        const databaseUrlEnv = input.entrypoint ? deps.deploy.providerProfile?.databaseUrlEnv : undefined;
         return {
           id: d.id,
           ...(d.name ? { name: d.name } : {}),
@@ -741,6 +744,7 @@ export function createToolContext(deps: ToolContextDeps): ToolContext {
           url,
           audience,
           ...(dataDir ? { dataDir } : {}),
+          ...(databaseUrlEnv ? { databaseUrlEnv } : {}),
         };
       });
     },

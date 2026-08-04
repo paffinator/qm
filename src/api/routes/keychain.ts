@@ -123,9 +123,10 @@ async function handleKeychain(ctx: ApiCtx): Promise<void> {
     if (method === "DELETE" && pathname.startsWith("/v1/keychain/credentials/")) {
       const id = params.id!;
       const ok = await kc.remove(actorId, id);
-      if (ok)
-        audit(deps, { principalId: actorId, action: "keychain.delete", resource: id, scopeLabel: capability.scopeId });
-      return ok ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "not_found" });
+      if (!ok) return sendJson(res, 404, { error: "not_found" });
+      audit(deps, { principalId: actorId, action: "keychain.delete", resource: id, scopeLabel: capability.scopeId });
+      const purged = await ctx.app.purgeDeploymentSecretsForCredential(id);
+      return sendJson(res, 200, { ok: true, ...(purged.length ? { purgedFrom: purged } : {}) });
     }
 
     if (method === "POST" && pathname === "/v1/keychain/grants") {
@@ -215,10 +216,21 @@ async function handleKeychain(ctx: ApiCtx): Promise<void> {
 
     if (method === "POST" && pathname.startsWith("/v1/keychain/grants/") && pathname.endsWith("/revoke")) {
       const id = params.id!;
+      const grant = (await kc.listGrants({ ownerId: actorId })).find((g) => g.id === id);
       const ok = await kc.revokeGrant(actorId, id);
-      if (ok)
-        audit(deps, { principalId: actorId, action: "keychain.revoke", resource: id, scopeLabel: capability.scopeId });
-      return ok ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "not_found" });
+      if (!ok) return sendJson(res, 404, { error: "not_found" });
+      audit(deps, { principalId: actorId, action: "keychain.revoke", resource: id, scopeLabel: capability.scopeId });
+      const stillLiveIn = grant ? await ctx.app.deploymentSecretsUsingCredential(grant.credentialId) : [];
+      if (stillLiveIn.length) {
+        audit(deps, {
+          principalId: actorId,
+          action: "keychain.revoke.residual",
+          resource: grant!.credentialId,
+          scopeLabel: capability.scopeId,
+          detail: stillLiveIn.map((r) => `${r.deploymentId}:${r.envKey}`).join(","),
+        });
+      }
+      return sendJson(res, 200, { ok: true, ...(stillLiveIn.length ? { stillLiveIn } : {}) });
     }
 
     if (method === "POST" && pathname === "/v1/keychain/asks") {

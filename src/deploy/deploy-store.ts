@@ -72,7 +72,6 @@ interface VersionInput {
   entrypoint: string;
   snapshotDir: string;
   homeDir?: string;
-  env?: Record<string, string>;
   files?: DeployGitInputFile[];
 }
 
@@ -94,6 +93,7 @@ export interface DeployStore {
   setDisplayName(id: string, displayName: string | undefined): Promise<void>;
   setDefaultAudience(id: string, snapshot: DefaultAudienceSnapshot): Promise<void>;
   setAppliedVersion(id: string, version: number): Promise<void>;
+  stripVersionEnv(id: string): Promise<boolean>;
   touch(id: string, at: number): Promise<void>;
   versionOf(id: string, version: number): Promise<DeploymentVersion | null>;
   treeOf(id: string, version: number): Promise<DeployGitTreeFile[] | null>;
@@ -107,6 +107,12 @@ export interface DeployStore {
 export interface DeployStoreBackings {
   deployments?: DurableMap<Deployment>;
   git?: DeployGitStoreOptions;
+}
+
+function withoutEnv(version: DeploymentVersion): DeploymentVersion {
+  const next = { ...version };
+  delete next.env;
+  return next;
 }
 
 const CURRENT_REF = "refs/heads/current";
@@ -148,7 +154,6 @@ export function createDeployStore(backing?: DurableMap<Deployment> | DeployStore
       entrypoint: input.entrypoint,
       snapshotDir: input.snapshotDir,
       ...(input.homeDir ? { homeDir: input.homeDir } : {}),
-      ...(input.env ? { env: input.env } : {}),
       ...(commit ? { commit } : {}),
       ...(parentCommit ? { parentCommit } : {}),
     };
@@ -280,6 +285,20 @@ export function createDeployStore(backing?: DurableMap<Deployment> | DeployStore
         await backingMap.put(id, d);
       }
     },
+    async stripVersionEnv(id) {
+      const strip = (d: Deployment): Deployment => ({ ...d, versions: d.versions.map(withoutEnv) });
+      const updated = await (backingMap.update
+        ? backingMap.update(id, strip)
+        : (async () => {
+            const d = await backingMap.get(id);
+            if (!d) return null;
+            const next = strip(d);
+            await backingMap.put(id, next);
+            return next;
+          })());
+      return !!updated;
+    },
+
     async setAppliedVersion(id, version) {
       const d = await backingMap.get(id);
       if (!d) return;
