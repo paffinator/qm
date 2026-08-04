@@ -10,6 +10,7 @@ import {
   modelServiceable,
   serviceableModelIds,
   modelProviderAvailabilityFor,
+  defaultModelForHarness,
 } from "../src/model/pi-models.ts";
 import { claudeCliKeylessCredential, loadConfig, providerKeysPresent } from "../src/config.ts";
 import { claudeChildEnv } from "../src/harness/claude-harness.ts";
@@ -118,6 +119,7 @@ test("codex serves openai on a ChatGPT credential, and that credential leaks now
     anthropic: false,
     openai: true,
     openrouter: false,
+    openaiViaSubscription: true,
   });
   assert.deepEqual(
     modelProviderAvailabilityFor("claude", noKeys, noKeys, cli),
@@ -126,6 +128,23 @@ test("codex serves openai on a ChatGPT credential, and that credential leaks now
   );
   assert.deepEqual(modelProviderAvailabilityFor("opencode", noKeys, noKeys, cli), noKeys);
   assert.deepEqual(modelProviderAvailabilityFor("pi", noKeys, noKeys, cli), noKeys);
+});
+
+test("a ChatGPT credential serves every codex model except the api-key-only tier", () => {
+  const noKeys = { anthropic: false, openai: false, openrouter: false };
+  const subscription = modelProviderAvailabilityFor("codex", noKeys, noKeys, { codex: true });
+  assert.equal(modelServiceable("gpt-5.6-sol", subscription), false);
+  assert.equal(modelServiceable("gpt-5.6-terra", subscription), true);
+  assert.equal(modelServiceable("gpt-5.6-luna", subscription), true);
+  assert.equal(
+    defaultModelForHarness("codex", undefined, subscription),
+    "gpt-5.6-terra",
+    "the default must not be a model the subscription cannot run",
+  );
+
+  const keyed = modelProviderAvailabilityFor("codex", { anthropic: false, openai: true, openrouter: false });
+  assert.equal(modelServiceable("gpt-5.6-sol", keyed), true, "an api key still serves the api-key-only tier");
+  assert.equal(defaultModelForHarness("codex", undefined, keyed), "gpt-5.6-sol");
 });
 
 test("a keyless claude credential never leaks into another harness's availability", () => {

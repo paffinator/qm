@@ -29,6 +29,7 @@ interface ModelEntry {
   webui: boolean;
   base: boolean;
   auxiliary?: boolean;
+  apiKeyOnly?: boolean;
   clone?: {
     template: string;
     input: number;
@@ -67,6 +68,7 @@ export const MODEL_REGISTRY: readonly ModelEntry[] = [
     fastMode: false,
     webui: true,
     base: true,
+    apiKeyOnly: true,
     clone: { ...GPT_56_CLONE, input: 5, output: 30 },
   },
   {
@@ -193,12 +195,16 @@ export interface ModelProviderAvailability {
   anthropic: boolean;
   openai: boolean;
   openrouter: boolean;
+  openaiViaSubscription?: boolean;
 }
 
 export function modelServiceable(id: string, providers: ModelProviderAvailability): boolean {
   const provider = resolveModel(id)?.provider;
   if (!provider) return false;
-  if (provider === "openai") return providers.openai;
+  if (provider === "openai") {
+    if (providers.openaiViaSubscription && REGISTRY_BY_ID.get(id)?.apiKeyOnly) return false;
+    return providers.openai;
+  }
   if (provider === "anthropic") return providers.anthropic;
   if (provider === "openrouter") return providers.openrouter;
   return true;
@@ -227,7 +233,12 @@ export function modelProviderAvailabilityFor(
 ): ModelProviderAvailability {
   if (harness === "pi") return managedKeys;
   if (harness === "opencode") return { ...configKeys, openrouter: false };
-  if (harness === "codex") return { ...configKeys, openai: configKeys.openai || Boolean(cliCredentials.codex) };
+  if (harness === "codex")
+    return {
+      ...configKeys,
+      openai: configKeys.openai || Boolean(cliCredentials.codex),
+      ...(!configKeys.openai && cliCredentials.codex ? { openaiViaSubscription: true } : {}),
+    };
   if (harness === "claude")
     return {
       anthropic: configKeys.anthropic || Boolean(cliCredentials.claude),
