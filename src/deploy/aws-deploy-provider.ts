@@ -2,7 +2,13 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { orgId as configOrgId } from "../config.ts";
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import type { Deployment, DeploymentVersion } from "./deploy-store.ts";
-import type { DeployEndpoint, DeployProvider, DeployReconcileInput } from "./deploy-provider.ts";
+import type {
+  DeployEndpoint,
+  DeployProvider,
+  DeployReconcileInput,
+  ResolveDeploySecrets,
+} from "./deploy-provider.ts";
+import { deployEnvEntries } from "./deploy-env.ts";
 import { bytes, normalizeRelPath, posixJoin, readTree } from "./deploy-fs.ts";
 import { AwsApiError, createMicrovmApi, createMicrovmClient, type AwsMicrovmApi } from "../sandbox/aws-microvm-api.ts";
 import { createMemoryMap, type DurableMap } from "../persistence/durable-map.ts";
@@ -86,6 +92,7 @@ export interface AwsDeployProviderOptions {
   fetchImpl?: typeof fetch;
   s3?: Pick<S3Client, "send">;
   sts?: Pick<STSClient, "send">;
+  resolveDeploySecrets?: ResolveDeploySecrets;
 }
 
 export function createAwsDeployProvider(opts: AwsDeployProviderOptions): DeployProvider {
@@ -424,9 +431,13 @@ export function createAwsDeployProvider(opts: AwsDeployProviderOptions): DeployP
     for (const f of files) await writeAbs(id, endpoint, posixJoin(root, normalizeRelPath(f.path)), bytes(f.data));
   }
 
-  async function startApp(id: string, endpoint: string, version: DeploymentVersion): Promise<void> {
-    const envExports = Object.entries(version.env ?? {})
-      .filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))
+  async function startApp(
+    id: string,
+    endpoint: string,
+    version: DeploymentVersion,
+    secrets?: Record<string, string>,
+  ): Promise<void> {
+    const envExports = deployEnvEntries(version.env, secrets)
       .map(([k, v]) => `export ${k}=${shq(v)}`)
       .join("; ");
     const inner = `cd ${shq(APP_DIR)}; ${version.entrypoint}`;
@@ -438,10 +449,10 @@ export function createAwsDeployProvider(opts: AwsDeployProviderOptions): DeployP
       `for i in $(seq 1 ${APP_PORT_RELEASE_TICKS}); do listening || break; sleep 0.25; done`,
       `listening && exit ${EXIT_APP_PORT_HELD}`,
       ...(s3 ? [`mkdir -p ${shq(DATA_DIR)}`] : []),
+      ...(envExports ? [envExports] : []),
       `export HOME=${shq(HOME_DIR)}`,
       `export PORT=${appPort}`,
       ...(s3 ? [`export DATA_DIR=${shq(DATA_DIR)}`] : []),
-      ...(envExports ? [envExports] : []),
       `setsid sh -c ${shq(inner)} > ${shq(LOG_PATH)} 2>&1 & echo $! > ${shq(PID_PATH)}`,
     ].join("; ");
     const r = await execRaw(id, endpoint, script, APP_START_EXEC_TIMEOUT_SEC);
@@ -524,7 +535,7 @@ export function createAwsDeployProvider(opts: AwsDeployProviderOptions): DeployP
         if (cur) await store.put(d.id, { ...cur, dataCredsAtMs: Date.now() });
       });
     }
-    await startApp(id, endpoint, version);
+    await startApp(id, endpoint, version, await opts.resolveDeploySecrets?.(d.id));
   }
 
   async function endpointFor(d: Deployment, microvmId: string, endpoint: string): Promise<DeployEndpoint> {

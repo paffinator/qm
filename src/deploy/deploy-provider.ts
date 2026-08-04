@@ -6,7 +6,10 @@ export interface DeployProfile {
   managedScaleToZero: boolean;
   inPlaceReconcile?: boolean;
   dataDir?: string;
+  databaseUrlEnv?: string;
 }
+
+export type ResolveDeploySecrets = (deploymentId: string) => Promise<Record<string, string>>;
 
 export interface DeployReconcileInput {
   gitBundle?: Uint8Array;

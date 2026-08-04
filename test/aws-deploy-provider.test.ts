@@ -256,6 +256,36 @@ test("apply: env framework keys are authoritative — PORT/HOME are set by the r
   assert.ok(start.includes("export HOME='/root'"), "HOME points at the resident-auth root");
   assert.ok(start.includes("export PORT=8081"), "PORT is the framework app port");
   assert.ok(start.includes("export API_KEY='secret'"), "published env still applies");
+  assert.ok(!start.includes("/tmp/evil"), "a published HOME never reaches the app");
+  assert.ok(!start.includes("3000"), "a published PORT never reaches the app");
+  assert.equal(start.match(/export PORT=/g)?.length, 1, "PORT is exported exactly once");
+  assert.equal(start.match(/export HOME=/g)?.length, 1, "HOME is exported exactly once");
+});
+
+test("apply: resolved secrets reach the app and a published env key cannot shadow them", async () => {
+  const { api } = fakeApi();
+  const { fetchImpl, execs } = fakeDaemon();
+  const d = deployment(ID);
+  await provider(api, fetchImpl, undefined, {
+    resolveDeploySecrets: async () => ({ DATABASE_URL: "postgres://u:p@h:5432/postgres" }),
+  }).apply(d, version(localSnapshot("server.js", "x"), { env: { DATABASE_URL: "postgres://attacker/" } }));
+  const start = execs.find((c) => c.includes("setsid"))!;
+  assert.ok(start.includes("export DATABASE_URL='postgres://u:p@h:5432/postgres'"), "the provisioned URL is exported");
+  assert.ok(!start.includes("attacker"), "a published DATABASE_URL never wins over the provisioned one");
+});
+
+test("apply: an env key that is not a shell identifier never reaches the start script", async () => {
+  const { api } = fakeApi();
+  const { fetchImpl, execs } = fakeDaemon();
+  const d = deployment(ID);
+  await provider(api, fetchImpl).apply(
+    d,
+    version(localSnapshot("server.js", "x"), { env: { "A=B": "smuggled", "2BAD": "no", OK: "yes" } }),
+  );
+  const start = execs.find((c) => c.includes("setsid"))!;
+  assert.ok(start.includes("export OK='yes'"), "a valid key still applies");
+  assert.ok(!start.includes("smuggled"), "a key containing = is dropped, not injected");
+  assert.ok(!start.includes("2BAD"), "a key starting with a digit is dropped");
 });
 
 test("reconcile (git bundle): checks the commit out via git, writes home, no file-by-file app writes", async () => {

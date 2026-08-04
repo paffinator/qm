@@ -1,5 +1,6 @@
 import type { Deployment, DeploymentVersion } from "./deploy-store.ts";
-import type { DeployEndpoint, DeployProvider } from "./deploy-provider.ts";
+import type { DeployEndpoint, DeployProvider, ResolveDeploySecrets } from "./deploy-provider.ts";
+import { deployEnvEntries } from "./deploy-env.ts";
 import { spawnDockerExec } from "../sandbox/docker-exec.ts";
 
 const NETWORK = "agent-deploynet";
@@ -9,6 +10,7 @@ export interface DockerDeployProviderOptions {
   image?: string;
   docker?: string;
   basePort?: number;
+  resolveDeploySecrets?: ResolveDeploySecrets;
 }
 
 export function createDockerDeployProvider(opts: DockerDeployProviderOptions = {}): DeployProvider {
@@ -43,7 +45,8 @@ export function createDockerDeployProvider(opts: DockerDeployProviderOptions = {
       await dexec(["network", "create", NETWORK]);
       await dexec(["rm", "-f", name(d)]);
       const hostPort = allocPort(name(d));
-      const envArgs = Object.entries(version.env ?? {}).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+      const secrets = await opts.resolveDeploySecrets?.(d.id);
+      const envArgs = deployEnvEntries(version.env, secrets).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
       const r = await dexec([
         "run",
         "-d",
@@ -63,9 +66,9 @@ export function createDockerDeployProvider(opts: DockerDeployProviderOptions = {
         `${version.snapshotDir}:/app:ro`,
         "-w",
         "/app",
+        ...envArgs,
         "-e",
         `PORT=${APP_PORT}`,
-        ...envArgs,
         image,
         "sh",
         "-c",
