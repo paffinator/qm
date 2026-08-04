@@ -77,9 +77,9 @@ export function seedEnvFromMain(worktree: string, log: (msg: string) => void): v
   }
 }
 
-async function anthropicKeyFromLoginShell(): Promise<string> {
+async function envVarFromLoginShell(name: string): Promise<string> {
   const shell = process.env.SHELL && existsSync(process.env.SHELL) ? process.env.SHELL : "/bin/zsh";
-  const res = await run(shell, ["-lic", 'printf "__AKB__%s__AKE__" "${ANTHROPIC_API_KEY:-}"'], { timeoutMs: 15_000 });
+  const res = await run(shell, ["-lic", `printf "__AKB__%s__AKE__" "\${${name}:-}"`], { timeoutMs: 15_000 });
   const out = res.stdout ?? "";
   const start = out.indexOf("__AKB__");
   const end = out.indexOf("__AKE__");
@@ -92,7 +92,7 @@ export async function assembleEnv(opts: {
   callerEnv: Record<string, string>;
   allowMock: boolean;
   log: (msg: string) => void;
-  probeLoginShell?: () => Promise<string>;
+  probeLoginShell?: (name: string) => Promise<string>;
 }): Promise<AssembledEnv> {
   const warnings: string[] = [];
   const liveEnvFile = liveEnvPath();
@@ -101,10 +101,12 @@ export async function assembleEnv(opts: {
     if (!env[k]) env[k] = v;
   }
 
+  const probe = opts.probeLoginShell ?? envVarFromLoginShell;
+
   let anthropicKeySource = "";
   if (opts.callerEnv.ANTHROPIC_API_KEY) anthropicKeySource = "your shell export";
   else {
-    const shellKey = await (opts.probeLoginShell ?? anthropicKeyFromLoginShell)();
+    const shellKey = await probe("ANTHROPIC_API_KEY");
     if (shellKey) {
       env.ANTHROPIC_API_KEY = shellKey;
       anthropicKeySource = "your login-shell profile";
@@ -133,6 +135,21 @@ export async function assembleEnv(opts: {
       throw new Error(
         "HARNESS=codex needs OPENAI_API_KEY (its CLI cannot do browser OAuth in a container) -- export it, or add it to the live env file or the worktree .env",
       );
+    }
+    if (harness === "claude") {
+      if (!env.CLAUDE_CODE_OAUTH_TOKEN) {
+        const shellToken = await probe("CLAUDE_CODE_OAUTH_TOKEN");
+        if (shellToken) env.CLAUDE_CODE_OAUTH_TOKEN = shellToken;
+        else if (wtEnv.CLAUDE_CODE_OAUTH_TOKEN) env.CLAUDE_CODE_OAUTH_TOKEN = wtEnv.CLAUDE_CODE_OAUTH_TOKEN;
+      }
+      if (!env.ANTHROPIC_API_KEY && !env.ANTHROPIC_AUTH_TOKEN && !env.CLAUDE_CODE_OAUTH_TOKEN) {
+        throw new Error(
+          `HARNESS=claude needs an anthropic credential for its CLI child: run "claude setup-token" and export CLAUDE_CODE_OAUTH_TOKEN to bill turns to your Claude subscription, or supply ANTHROPIC_API_KEY -- either may also live in ${liveEnvFile} or the worktree .env`,
+        );
+      }
+      if (!anthropicKeySource && env.CLAUDE_CODE_OAUTH_TOKEN) {
+        anthropicKeySource = "your Claude subscription (CLAUDE_CODE_OAUTH_TOKEN)";
+      }
     }
   } else if (env.ANTHROPIC_API_KEY) {
     harness = opts.callerEnv.HARNESS === "opencode" ? "opencode" : "pi";

@@ -210,6 +210,12 @@ export function serviceableModelIds(ids: readonly string[], providers: ModelProv
 
 export const ALL_PROVIDERS_AVAILABLE: ModelProviderAvailability = { anthropic: true, openai: true, openrouter: true };
 
+export const NO_PROVIDERS_AVAILABLE: ModelProviderAvailability = {
+  anthropic: false,
+  openai: false,
+  openrouter: false,
+};
+
 export function modelProviderAvailabilityFor(
   harness: string,
   configKeys: ModelProviderAvailability,
@@ -218,6 +224,7 @@ export function modelProviderAvailabilityFor(
   if (harness === "pi") return managedKeys;
   if (harness === "opencode") return { ...configKeys, openrouter: false };
   if (harness === "codex") return configKeys;
+  if (harness === "claude") return configKeys.anthropic ? onlyProvider("anthropic") : NO_PROVIDERS_AVAILABLE;
   return ALL_PROVIDERS_AVAILABLE;
 }
 

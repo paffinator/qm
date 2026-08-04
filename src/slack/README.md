@@ -41,6 +41,18 @@ npm start
 (`OPENAI_API_KEY` or `OPENROUTER_API_KEY` works in place of `ANTHROPIC_API_KEY`; the base
 model follows whichever provider you configure.)
 
+To run turns on a Claude subscription instead of API credit, use the Claude Code harness
+and give it a subscription token from `claude setup-token`:
+
+```bash
+HARNESS=claude ORG_ID=acme CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-… npm start
+```
+
+Turns then draw on that subscription's usage allowance rather than billing per token, and
+they share its limits with your own Claude Code usage. Because the token authenticates as
+one person, this is for running your own instance — a deployment that serves other people
+needs an API key, set in its environment or supplied by an admin on the Admin page.
+
 (Or put the tokens in the repo-root `.env` — `npm start` loads it via
 `node --env-file-if-exists`.) It logs `connected as @agent …` when live; without
 the tokens, core simply runs without Slack.

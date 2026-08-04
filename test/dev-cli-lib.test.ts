@@ -282,6 +282,22 @@ test("env assembly precedence: caller > login shell > dev.env > worktree .env; h
   );
   const mock = await assembleEnv({ worktree, callerEnv: {}, allowMock: true, log, probeLoginShell: async () => "" });
   assert.equal(mock.harness, "mock");
+
+  await assert.rejects(
+    assembleEnv({ worktree, callerEnv: { HARNESS: "claude" }, allowMock: false, log, probeLoginShell: async () => "" }),
+    /HARNESS=claude needs an anthropic credential/,
+  );
+  const subscription = await assembleEnv({
+    worktree,
+    callerEnv: { HARNESS: "claude" },
+    allowMock: false,
+    log,
+    probeLoginShell: async (name) => (name === "CLAUDE_CODE_OAUTH_TOKEN" ? "sk-ant-oat01-x" : ""),
+  });
+  assert.equal(subscription.harness, "claude");
+  assert.equal(subscription.env.CLAUDE_CODE_OAUTH_TOKEN, "sk-ant-oat01-x");
+  assert.equal(subscription.anthropicKeySource, "your Claude subscription (CLAUDE_CODE_OAUTH_TOKEN)");
+  assert.equal(subscription.env.ANTHROPIC_API_KEY, undefined);
   if (prevLive === undefined) delete process.env.QM_DEV_ENV;
   else process.env.QM_DEV_ENV = prevLive;
   rmSync(worktree, { recursive: true, force: true });

@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { createInsecureTestServer } from "../src/api/server.ts";
 import { buildApp, type BuiltApp } from "../src/wiring.ts";
 import { testConfig } from "./support/test-config.ts";
+import { providerKeysPresent } from "../src/config.ts";
 import { createModelCredentialStore, type StoredModelCredential } from "../src/model/model-credential-store.ts";
 import { createMemoryMap } from "../src/persistence/durable-map.ts";
 
@@ -22,23 +23,17 @@ function start(
   built: BuiltApp;
   close: () => Promise<void>;
 } {
-  const built = buildApp(
-    testConfig({
-      dataDir: mkdtempSync(join(tmpdir(), "model-credential-route-")),
-      ...config,
-    }),
-    { modelCredentialFetch },
-  );
+  const resolved = testConfig({
+    dataDir: mkdtempSync(join(tmpdir(), "model-credential-route-")),
+    ...config,
+  });
+  const built = buildApp(resolved, { modelCredentialFetch });
   const server = createInsecureTestServer(built.app, {
     config: built.config,
     modelCredentials: built.modelCredentials,
     modelCredentialFetch,
     harnessId: config.harness ?? "pi",
-    providerKeys: {
-      anthropic: Boolean(config.anthropicApiKey),
-      openai: Boolean(config.openaiApiKey),
-      openrouter: Boolean(config.openrouterApiKey),
-    },
+    providerKeys: providerKeysPresent(resolved),
     admin: built.admin,
     auditLog: built.auditLog,
   });
@@ -398,6 +393,41 @@ test("surface-config reports whether any model provider is configured", async ()
     assert.equal(((await after.json()) as { modelProviderConfigured?: boolean }).modelProviderConfigured, true);
   } finally {
     await srv.close();
+  }
+});
+
+test("surface-config: a claude subscription token configures the surface, absence of one gates it", async () => {
+  const subscription = start({
+    harness: "claude",
+    claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-test" },
+  });
+  try {
+    const body = (await (await fetch(`${subscription.base}/v1/surface-config`)).json()) as {
+      modelProviderConfigured?: boolean;
+    };
+    assert.equal(body.modelProviderConfigured, true);
+  } finally {
+    await subscription.close();
+  }
+
+  const unauthenticated = start({ harness: "claude", claudeProcessEnv: {} });
+  try {
+    const body = (await (await fetch(`${unauthenticated.base}/v1/surface-config`)).json()) as {
+      modelProviderConfigured?: boolean;
+    };
+    assert.equal(body.modelProviderConfigured, false);
+
+    await unauthenticated.built.modelCredentials.set("anthropic", "admin-key", "admin-alice@default-org");
+    const afterAdminKey = (await (await fetch(`${unauthenticated.base}/v1/surface-config`)).json()) as {
+      modelProviderConfigured?: boolean;
+    };
+    assert.equal(
+      afterAdminKey.modelProviderConfigured,
+      false,
+      "an admin-pasted key never reaches the claude CLI child, so it must not unlock the surface",
+    );
+  } finally {
+    await unauthenticated.close();
   }
 });
 

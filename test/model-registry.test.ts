@@ -11,6 +11,7 @@ import {
   serviceableModelIds,
   modelProviderAvailabilityFor,
 } from "../src/model/pi-models.ts";
+import { providerKeysPresent } from "../src/config.ts";
 import { validateWebTurnModelOptions } from "../src/core/turn-options.ts";
 
 test("every registry model resolves via pi-ai (nothing offered that turns can't serve)", () => {
@@ -61,7 +62,7 @@ test("exposure is provider-key-aware: a model whose provider is unconfigured is 
   assert.deepEqual(serviceableModelIds(["claude-opus-4-8", "gpt-5.6-sol"], noOpenai), ["claude-opus-4-8"]);
 });
 
-test("provider-key gating applies only to key-authed harnesses (no over-hiding on CLI-auth harnesses)", () => {
+test("provider-key gating applies to key-authed harnesses, never to mock", () => {
   const noKeys = { anthropic: false, openai: false, openrouter: false };
   assert.deepEqual(modelProviderAvailabilityFor("pi", noKeys), noKeys);
   assert.deepEqual(modelProviderAvailabilityFor("opencode", noKeys), noKeys);
@@ -84,8 +85,39 @@ test("provider-key gating applies only to key-authed harnesses (no over-hiding o
     openai: true,
     openrouter: false,
   });
-  assert.deepEqual(modelProviderAvailabilityFor("claude", noKeys), { anthropic: true, openai: true, openrouter: true });
   assert.deepEqual(modelProviderAvailabilityFor("mock", noKeys), { anthropic: true, openai: true, openrouter: true });
+});
+
+test("claude harness serves anthropic only, and only with a credential its CLI child can see", () => {
+  const noKeys = { anthropic: false, openai: false, openrouter: false };
+  assert.deepEqual(modelProviderAvailabilityFor("claude", noKeys), noKeys);
+  assert.deepEqual(modelProviderAvailabilityFor("claude", { anthropic: true, openai: true, openrouter: true }), {
+    anthropic: true,
+    openai: false,
+    openrouter: false,
+  });
+  assert.deepEqual(modelProviderAvailabilityFor("claude", noKeys, { anthropic: true, openai: true, openrouter: true }), {
+    anthropic: false,
+    openai: false,
+    openrouter: false,
+  });
+});
+
+test("a claude subscription token counts as anthropic auth; an api key still does, other harnesses ignore it", () => {
+  const base = { harness: "claude", claudeProcessEnv: {} } as unknown as Parameters<typeof providerKeysPresent>[0];
+  assert.equal(providerKeysPresent(base).anthropic, false);
+  assert.equal(
+    providerKeysPresent({ ...base, claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x" } }).anthropic,
+    true,
+  );
+  assert.equal(providerKeysPresent({ ...base, claudeProcessEnv: { ANTHROPIC_AUTH_TOKEN: "tok" } }).anthropic, true);
+  assert.equal(providerKeysPresent({ ...base, claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "  " } }).anthropic, false);
+  assert.equal(providerKeysPresent({ ...base, anthropicApiKey: "sk-ant-key" }).anthropic, true);
+  assert.equal(
+    providerKeysPresent({ ...base, harness: "pi", claudeProcessEnv: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-x" } })
+      .anthropic,
+    false,
+  );
 });
 
 test("web-turn gate refuses a keyless model cleanly, accepts it once the provider is configured", () => {

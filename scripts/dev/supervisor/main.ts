@@ -315,7 +315,9 @@ async function assembleAndPrepare(spec: BootSpec): Promise<SpecInputs> {
   if (assembled.harness === "mock") harnessDetail = "mock turns";
   else if (assembled.harness === "codex") {
     harnessDetail = `live codex turns (openai key from ${assembled.openaiKeySource || "the environment"})`;
-  } else if (assembled.harness === "claude") harnessDetail = "live claude turns (native CLI authentication)";
+  } else if (assembled.harness === "claude") {
+    harnessDetail = `live claude turns (CLI credential from ${assembled.anthropicKeySource || "the environment"})`;
+  }
   phase("env", "ok", harnessDetail);
 
   phase("deps", "start");

@@ -151,9 +151,16 @@ export function configuredModelForHarness(config: Config, harness: string): stri
   return config.modelId;
 }
 
+const CLAUDE_CLI_KEYLESS_CREDENTIALS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"] as const;
+
+export function claudeCliKeylessCredential(config: Config): boolean {
+  if (config.harness !== "claude") return false;
+  return CLAUDE_CLI_KEYLESS_CREDENTIALS.some((name) => Boolean(config.claudeProcessEnv[name]?.trim()));
+}
+
 export function providerKeysPresent(config: Config): ModelProviderAvailability {
   return {
-    anthropic: Boolean(config.anthropicApiKey),
+    anthropic: Boolean(config.anthropicApiKey) || claudeCliKeylessCredential(config),
     openai: Boolean(config.openaiApiKey),
     openrouter: Boolean(config.openrouterApiKey),
   };

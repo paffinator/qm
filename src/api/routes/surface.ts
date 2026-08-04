@@ -856,6 +856,9 @@ async function getSurfaceConfig(ctx: ApiCtx): Promise<void> {
   ]);
   const harnessId = deps.harnessId ?? "pi";
   const managedKeys = deps.modelCredentials ? await deps.modelCredentials.availability() : null;
+  const servingProviders = managedKeys
+    ? modelProviderAvailabilityFor(harnessId, deps.providerKeys ?? ALL_PROVIDERS_AVAILABLE, managedKeys)
+    : null;
   const catalog = managedKeys?.openrouter
     ? await selectableModelCatalog(deps.modelCredentialFetch)
     : builtInModelCatalog();
@@ -889,7 +892,7 @@ async function getSurfaceConfig(ctx: ApiCtx): Promise<void> {
     webuiModels: configuredPicker.length ? configuredPicker : allowed,
     baseModel: resolvedBase,
     harnessId,
-    ...(managedKeys ? { modelProviderConfigured: Object.values(managedKeys).some(Boolean) } : {}),
+    ...(servingProviders ? { modelProviderConfigured: Object.values(servingProviders).some(Boolean) } : {}),
     externalSlackParticipants,
     ...(Object.keys(resolvedBranding).length ? { branding: resolvedBranding } : {}),
   });
