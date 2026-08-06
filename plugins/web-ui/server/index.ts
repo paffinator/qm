@@ -1126,12 +1126,10 @@ const routeRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return relay(res, r);
     }
 
-    if (method === "GET" && path === "/api/memory") {
-      const r = await coreFetch("GET", `/v1/memory?principalId=${encodeURIComponent(user)}`);
-      return relay(res, r);
-    }
-    if (method === "GET" && path === "/api/memory/history") {
-      const r = await coreFetch("GET", `/v1/memory/history?principalId=${encodeURIComponent(user)}`);
+    if (method === "GET" && (path === "/api/memory" || path === "/api/memory/history")) {
+      const scope = url.searchParams.get("scope");
+      const query = `principalId=${encodeURIComponent(user)}` + (scope ? `&scope=${encodeURIComponent(scope)}` : "");
+      const r = await coreFetch("GET", `/v1${path.slice("/api".length)}?${query}`);
       return relay(res, r);
     }
     if (method === "POST" && path === "/api/memory/restore") {
@@ -1394,10 +1392,7 @@ const routeRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (!(await gateManageDeployment(res, user, id))) return;
       return relay(
         res,
-        await coreFetch(
-          "DELETE",
-          `/v1/deployments/${encodeURIComponent(id)}/secrets/${encodeURIComponent(envKey)}`,
-        ),
+        await coreFetch("DELETE", `/v1/deployments/${encodeURIComponent(id)}/secrets/${encodeURIComponent(envKey)}`),
       );
     }
 

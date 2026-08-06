@@ -1,4 +1,4 @@
-import { html, nothing, render } from "lit";
+import { html, nothing, render, type TemplateResult } from "lit";
 import { Clock3, Pencil, RefreshCw, Search, Trash2 } from "lucide";
 import { api, ApiError } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
@@ -24,6 +24,8 @@ let search = "";
 let historyOpen = false;
 let history: RevisionRow[] = [];
 let memoryConfirmation: { title: string; body: string; action: string; run: () => Promise<void> } | null = null;
+let memoryScope = "";
+let projectScopes: Array<{ scopeId: string; name: string }> = [];
 
 export function resetMemoryState(): void {
   memoryDraft = "";
@@ -37,9 +39,57 @@ export function resetMemoryState(): void {
   historyOpen = false;
   history = [];
   memoryConfirmation = null;
+  memoryScope = "";
+  projectScopes = [];
 }
 
-function facts(content: string): Array<{ line: number; text: string; date?: string }> {
+function ownNotebook(): boolean {
+  return memoryScope === "";
+}
+
+function scopeQuery(): string {
+  return memoryScope ? `?scope=${encodeURIComponent(memoryScope)}` : "";
+}
+
+function scopeName(): string {
+  return projectScopes.find((p) => p.scopeId === memoryScope)?.name ?? "this project";
+}
+
+async function loadProjectScopes(): Promise<void> {
+  const r = await api<{
+    contexts?: Array<{ scopeId?: string; kind?: string; project?: { name?: string } | null }>;
+  }>("/api/contexts");
+  projectScopes = (r.contexts ?? []).flatMap((c) =>
+    c.kind === "group" && c.scopeId && c.project?.name ? [{ scopeId: c.scopeId, name: c.project.name }] : [],
+  );
+}
+
+function switchScope(scopeId: string): void {
+  if (scopeId === memoryScope) return;
+  const move = () => {
+    memoryScope = scopeId;
+    memoryDraft = "";
+    memorySaved = "";
+    memoryRevision = "";
+    memoryLoaded = false;
+    history = [];
+    search = "";
+    memoryConfirmation = null;
+    void renderMemory(true);
+  };
+  if (memoryLoaded && memoryDraft !== memorySaved) {
+    memoryConfirmation = {
+      title: "Discard unsaved memory changes?",
+      body: "Switching notebooks will drop this draft. Copy anything you want to keep before continuing.",
+      action: "Discard and switch",
+      run: async () => move(),
+    };
+    return void drawMemory();
+  }
+  move();
+}
+
+function facts(content: string): Fact[] {
   return content.split("\n").flatMap((row, line) => {
     const match = row.match(/^\s*[-*]\s+(?:\((\d{4}-\d{2}-\d{2})\)\s*)?(.*\S)\s*$/);
     return match ? [{ line, ...(match[1] ? { date: match[1] } : {}), text: match[2]! }] : [];
@@ -57,6 +107,65 @@ function fmtDate(ms: number): string {
   return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
+type Fact = { line: number; text: string; date?: string };
+
+function notebookBody(loading: boolean, visible: Fact[]): TemplateResult {
+  if (!ownNotebook()) {
+    return html`<textarea class="memory-text" spellcheck="false" readonly .value=${memorySaved}></textarea>`;
+  }
+  if (rawEditing) {
+    return html`<textarea
+      class="memory-text"
+      data-focus-key="memory-raw"
+      spellcheck="false"
+      ?disabled=${loading || memorySaving}
+      @input=${(e: Event) => {
+        memoryDraft = (e.target as HTMLTextAreaElement).value;
+        drawMemory();
+      }}
+      .value=${memoryDraft}
+    ></textarea>`;
+  }
+  return html` <label class="memory-search"
+      >${icon(Search, 16)}<input
+        data-focus-key="memory-search"
+        aria-label="Search memory"
+        type="search"
+        placeholder="Search remembered facts"
+        .value=${search}
+        @input=${(e: Event) => {
+          search = (e.target as HTMLInputElement).value;
+          drawMemory();
+        }}
+    /></label>
+    <div class="memory-facts">
+      ${
+        visible.length
+          ? visible.map(
+              (fact) =>
+                html`<div class="memory-fact">
+                  <div>
+                    <div>${fact.text}</div>
+                    ${fact.date ? html`<div class="card-meta">Captured ${fact.date}</div>` : nothing}
+                  </div>
+                  <button
+                    class="icon-btn"
+                    type="button"
+                    aria-label="Forget this fact"
+                    title="Forget this fact"
+                    @click=${() => removeFact(fact.line)}
+                  >
+                    ${icon(Trash2, 15)}
+                  </button>
+                </div>`,
+            )
+          : html`<div class="empty-state">
+              ${search ? "No remembered facts match this search." : "The agent hasn’t noted any facts yet."}
+            </div>`
+      }
+    </div>`;
+}
+
 function drawMemory(loading = false): void {
   if (appState.currentView !== "memory" || !appState.mainEl) return;
   const dirty = memoryDraft !== memorySaved;
@@ -70,19 +179,42 @@ function drawMemory(loading = false): void {
       <div class="pane-head">
         <div>
           <h1 class="pane-title">Memory</h1>
-          <div class="pane-subtitle">Facts the agent carries into your conversations.</div>
+          <div class="pane-subtitle">
+            ${
+              ownNotebook()
+                ? "Facts the agent carries into your conversations."
+                : html`Facts every member of ${scopeName()} shares. Your own memory stays private to you.`
+            }
+          </div>
         </div>
         <div class="pane-head-actions">
-          <button
-            class="btn"
-            type="button"
-            @click=${() => {
-              rawEditing = !rawEditing;
-              drawMemory();
-            }}
-          >
-            ${icon(Pencil, 15)} ${rawEditing ? "Facts view" : "Edit notebook"}
-          </button>
+          ${
+            projectScopes.length
+              ? html`<label class="list-select"
+                  ><span>Notebook</span
+                  ><select @change=${(event: Event) => switchScope((event.currentTarget as HTMLSelectElement).value)}>
+                    <option value="" ?selected=${ownNotebook()}>Your memory</option>
+                    ${projectScopes.map(
+                      (p) => html`<option value=${p.scopeId} ?selected=${p.scopeId === memoryScope}>${p.name}</option>`,
+                    )}
+                  </select></label
+                >`
+              : nothing
+          }
+          ${
+            ownNotebook()
+              ? html`<button
+                  class="btn"
+                  type="button"
+                  @click=${() => {
+                    rawEditing = !rawEditing;
+                    drawMemory();
+                  }}
+                >
+                  ${icon(Pencil, 15)} ${rawEditing ? "Facts view" : "Edit notebook"}
+                </button>`
+              : nothing
+          }
           <button class="btn" type="button" @click=${() => void toggleHistory()}>${icon(Clock3, 15)} History</button>
           <button
             class="pane-refresh"
@@ -98,72 +230,29 @@ function drawMemory(loading = false): void {
       ${memoryNotice || loading ? html`<div class="status">${memoryNotice || "Loading…"}</div>` : nothing}
       <div class="memory-editor">
         <p class="memory-help">
-          Edit the notebook directly. Switch to Facts view to search or remove individual facts. Saves are protected if
-          the agent remembers something new while this page is open.
+          ${
+            ownNotebook()
+              ? "Edit the notebook directly. Switch to Facts view to search or remove individual facts. Saves are protected if the agent remembers something new while this page is open."
+              : html`Read-only here. A project notebook is written by the agent as the project talks, so it is not
+                edited by hand — and editing it from this page would silently write to your own memory instead.`
+          }
         </p>
+        ${notebookBody(loading, visible)}
         ${
-          rawEditing
-            ? html`<textarea
-                class="memory-text"
-                data-focus-key="memory-raw"
-                spellcheck="false"
-                ?disabled=${loading || memorySaving}
-                @input=${(e: Event) => {
-                  memoryDraft = (e.target as HTMLTextAreaElement).value;
-                  drawMemory();
-                }}
-                .value=${memoryDraft}
-              ></textarea>`
-            : html` <label class="memory-search"
-                  >${icon(Search, 16)}<input
-                    data-focus-key="memory-search"
-                    aria-label="Search memory"
-                    type="search"
-                    placeholder="Search remembered facts"
-                    .value=${search}
-                    @input=${(e: Event) => {
-                      search = (e.target as HTMLInputElement).value;
-                      drawMemory();
-                    }}
-                /></label>
-                <div class="memory-facts">
-                  ${
-                    visible.length
-                      ? visible.map(
-                          (fact) =>
-                            html`<div class="memory-fact">
-                              <div>
-                                <div>${fact.text}</div>
-                                ${fact.date ? html`<div class="card-meta">Captured ${fact.date}</div>` : nothing}
-                              </div>
-                              <button
-                                class="icon-btn"
-                                type="button"
-                                aria-label="Forget this fact"
-                                title="Forget this fact"
-                                @click=${() => removeFact(fact.line)}
-                              >
-                                ${icon(Trash2, 15)}
-                              </button>
-                            </div>`,
-                        )
-                      : html`<div class="empty-state">
-                          ${search ? "No remembered facts match this search." : "The agent hasn’t noted any facts yet."}
-                        </div>`
-                  }
-                </div>`
+          ownNotebook()
+            ? html`<div class="memory-actions">
+                <button
+                  class="btn primary memory-save"
+                  type="button"
+                  ?disabled=${loading || memorySaving || !dirty}
+                  @click=${() => void saveMemory()}
+                >
+                  ${memorySaving ? "Saving…" : "Save changes"}
+                </button>
+                <span class="memory-hint">${dirty && !memorySaving ? "Unsaved changes" : ""}</span>
+              </div>`
+            : nothing
         }
-        <div class="memory-actions">
-          <button
-            class="btn primary memory-save"
-            type="button"
-            ?disabled=${loading || memorySaving || !dirty}
-            @click=${() => void saveMemory()}
-          >
-            ${memorySaving ? "Saving…" : "Save changes"}
-          </button>
-          <span class="memory-hint">${dirty && !memorySaving ? "Unsaved changes" : ""}</span>
-        </div>
         ${
           historyOpen
             ? html` <section class="memory-history">
@@ -179,7 +268,7 @@ function drawMemory(loading = false): void {
                                 ${fmtDate(row.at)} · ${row.author || "automatic capture"} · ${row.operation}
                               </div>
                             </div>
-                            ${i ? html`<button class="btn" type="button" @click=${() => requestRestoreRevision(row)}>Restore</button>` : nothing}
+                            ${i && ownNotebook() ? html`<button class="btn" type="button" @click=${() => requestRestoreRevision(row)}>Restore</button>` : nothing}
                           </div>`,
                       )
                     : html`<div class="empty-state">Revision history is unavailable for this memory store.</div>`
@@ -240,7 +329,13 @@ export async function renderMemory(force = false): Promise<void> {
   memoryNotice = "";
   drawMemory(true);
   try {
-    const r = await api<{ content?: string; revision?: string }>("/api/memory");
+    await loadProjectScopes();
+  } catch (e) {
+    memoryNotice = errMessage(e, "Failed to list your projects; showing your own memory only.");
+  }
+  if (memoryScope && !projectScopes.some((p) => p.scopeId === memoryScope)) memoryScope = "";
+  try {
+    const r = await api<{ content?: string; revision?: string }>(`/api/memory${scopeQuery()}`);
     if (seq !== appState.viewRenderSeq || appState.currentView !== "memory") return;
     memorySaved = r.content ?? "";
     memoryDraft = memorySaved;
@@ -286,7 +381,7 @@ async function saveMemory(): Promise<void> {
 }
 
 async function loadHistory(): Promise<void> {
-  const r = await api<{ revisions?: RevisionRow[] }>("/api/memory/history");
+  const r = await api<{ revisions?: RevisionRow[] }>(`/api/memory/history${scopeQuery()}`);
   history = r.revisions ?? [];
 }
 
