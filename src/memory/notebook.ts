@@ -20,12 +20,27 @@ export function bullets(body: string): string[] {
   return body.split("\n").filter(isBullet).map(bulletText);
 }
 
+const SOURCE_ASIDE = /^said in\b/i;
+const PROVENANCE_ASIDE = /^(?:stated|told|claimed|reported|mentioned|per|source|according)\b|\d{4}-\d\d-\d\d/i;
+
+function withoutProvenanceAsides(text: string): string {
+  let out = text;
+  for (;;) {
+    const aside = /\(([^()]*)\)$/.exec(out);
+    if (!aside) return out;
+    const inner = aside[1]!.trim();
+    if (SOURCE_ASIDE.test(inner) || !PROVENANCE_ASIDE.test(inner)) return out;
+    out = out.slice(0, aside.index).trim();
+  }
+}
+
 export function normalize(line: string): string {
-  return line
-    .replace(/^[-*]\s*/, "")
-    .replace(/^\(\d{4}-\d\d-\d\d\)\s*/, "")
-    .trim()
-    .toLowerCase();
+  return withoutProvenanceAsides(
+    line
+      .replace(/^[-*]\s*/, "")
+      .replace(/^\(\d{4}-\d\d-\d\d\)\s*/, "")
+      .trim(),
+  ).toLowerCase();
 }
 
 export function dateStr(at: number): string {

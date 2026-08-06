@@ -110,6 +110,40 @@ test("the memory protocol is always present in the system prompt", async () => {
   assert.match(res.reply ?? "", /## Memory/);
 });
 
+test("a fact the extractor re-states with its own provenance is not captured twice", async () => {
+  const ws = createLocalWorkspaceStore(mkdtempSync(join(tmpdir(), "ws-mem-aside-")));
+  const mem = createMemoryService(ws);
+  const sid = scopeId("personal", "U1");
+  await ws.ensureScope(sid);
+  const at = Date.UTC(2026, 7, 6);
+
+  assert.equal(await mem.capture(sid, ["Runs an art company called Oakenfield (stated 2026-08-06 in DM)"], at), 1);
+  assert.equal(
+    await mem.capture(sid, ["Runs an art company called Oakenfield"], at),
+    0,
+    "the same fact without the aside adds nothing",
+  );
+  assert.equal(
+    await mem.capture(sid, ['Refers to their art company Oakenfield as "Oak" in shorthand'], at),
+    1,
+    "the shorthand convention is a genuinely different fact",
+  );
+  assert.equal(
+    await mem.capture(sid, ["Runs an art company called Oak"], at),
+    1,
+    "an alias still lands: collapsing it is consolidation's judgement, not the capture key's",
+  );
+
+  const stored = await mem.read(sid);
+  const bullets = stored.split("\n").filter((l) => l.startsWith("- "));
+  assert.equal(bullets.length, 3, "four extractions, three facts");
+  assert.equal(
+    bullets.filter((l) => l.includes("Oakenfield") && !l.includes("shorthand")).length,
+    1,
+    "only one plain 'called Oakenfield' line survives",
+  );
+});
+
 test("capture dedupes, dates, and recall returns the stored memory", async () => {
   const ws = createLocalWorkspaceStore(mkdtempSync(join(tmpdir(), "ws-mem-")));
   const mem = createMemoryService(ws);
