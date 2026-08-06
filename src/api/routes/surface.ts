@@ -350,15 +350,31 @@ async function listScopeResources(ctx: ApiCtx): Promise<void> {
   });
 }
 
+async function readableMemoryScope(ctx: ApiCtx, principalId: string): Promise<ScopeId | null> {
+  const requested = ctx.url.searchParams.get("scope");
+  const own = makeScopeId("personal", principalId);
+  if (!requested || requested === own) return own;
+  const scope = requested as ScopeId;
+  if (parseScopeId(scope).kind === "org") return null;
+  return (await ctx.app.belongsToScope(principalId, scope)) ? scope : null;
+}
+
 async function getSelfMemory(ctx: ApiCtx): Promise<void> {
   const { res, deps, url } = ctx;
   const principalId = url.searchParams.get("principalId");
   if (!principalId) return sendJson(res, 400, { error: "bad_request", message: "principalId required" });
   if (!deps.memory) return sendJson(res, 404, { error: "not_found" });
-  const scope = makeScopeId("personal", principalId);
-  audit(deps, { principalId, action: "memory.self.read", resource: "memory", scopeLabel: scope });
+  const scope = await readableMemoryScope(ctx, principalId);
+  if (!scope) return sendJson(res, 404, { error: "not_found", message: "not a context you can see" });
+  const own = scope === makeScopeId("personal", principalId);
+  audit(deps, {
+    principalId,
+    action: own ? "memory.self.read" : "memory.scope.read",
+    resource: "memory",
+    scopeLabel: scope,
+  });
   const head = await deps.memory.readHead?.(scope);
-  return sendJson(res, 200, head ?? { content: await deps.memory.read(scope), revision: "" });
+  return sendJson(res, 200, { scopeId: scope, ...(head ?? { content: await deps.memory.read(scope), revision: "" }) });
 }
 
 async function putSelfMemory(ctx: ApiCtx): Promise<void> {
@@ -386,8 +402,10 @@ async function getSelfMemoryHistory(ctx: ApiCtx): Promise<void> {
   const { res, deps, url } = ctx;
   const principalId = url.searchParams.get("principalId");
   if (!principalId) return sendJson(res, 400, { error: "bad_request", message: "principalId required" });
+  const scope = await readableMemoryScope(ctx, principalId);
+  if (!scope) return sendJson(res, 404, { error: "not_found", message: "not a context you can see" });
   if (!deps.memory?.history) return sendJson(res, 200, { revisions: [] });
-  return sendJson(res, 200, { revisions: await deps.memory.history(makeScopeId("personal", principalId), 30) });
+  return sendJson(res, 200, { revisions: await deps.memory.history(scope, 30) });
 }
 
 async function restoreSelfMemory(ctx: ApiCtx): Promise<void> {

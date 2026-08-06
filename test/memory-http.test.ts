@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { createInsecureTestServer } from "../src/api/server.ts";
 import { buildApp } from "../src/wiring.ts";
+import { projectScopeId } from "../src/projects/project-store.ts";
 import { scopeId } from "../src/types.ts";
 import { testConfig } from "./support/test-config.ts";
 
@@ -66,6 +67,77 @@ test("a user reads and curates their OWN personal memory (personal-scoped, bound
       actions.includes("memory.self.read") && actions.includes("memory.self.update"),
       "self memory access is audited",
     );
+  } finally {
+    await s.close();
+  }
+});
+
+test("a project member reads the project notebook without being an org admin", async () => {
+  const s = start();
+  try {
+    const project = await s.built.projects.create({ name: "Launch Cohort", ownerId: "owner" });
+    await s.built.projects.addMember(project.id, "owner", "member");
+    const scope = projectScopeId(project.id);
+    await s.built.memory.capture(scope, ["The release train is Petitcodiac"], Date.parse("2026-05-31"));
+    const at = (principalId: string, target: string) =>
+      `${s.base}/v1/memory?principalId=${principalId}&scope=${encodeURIComponent(target)}`;
+
+    const read = await fetch(at("member", scope));
+    assert.equal(read.status, 200);
+    const head = await json(read);
+    assert.equal(head.scopeId, scope, "the response names the notebook it read");
+    assert.match(head.content, /Petitcodiac/, "a member reads the project notebook");
+    assert.match(head.revision, /^[a-f0-9]{64}$/, "with a usable revision token");
+
+    assert.equal((await fetch(at("outsider", scope))).status, 404, "a non-member cannot read it");
+    assert.equal(
+      (await json(await fetch(at("outsider", scope)))).message,
+      "not a context you can see",
+      "and is not told whether it exists",
+    );
+    assert.equal((await fetch(at("member", "personal:owner"))).status, 404, "nor another person's personal notebook");
+    assert.equal((await fetch(at("member", "nonsense"))).status, 404, "nor a scope that cannot be parsed");
+    assert.equal(
+      (await fetch(at("member", "org:default-org"))).status,
+      404,
+      "the org notebook stays on the admin route: this param widens project reads only",
+    );
+
+    const history = await fetch(`${s.base}/v1/memory/history?principalId=member&scope=${encodeURIComponent(scope)}`);
+    assert.equal(history.status, 200, "a member may ask for the project notebook's history");
+    assert.ok(Array.isArray((await json(history)).revisions), "revisions are empty here: only Postgres keeps them");
+    assert.equal(
+      (await fetch(`${s.base}/v1/memory/history?principalId=outsider&scope=${encodeURIComponent(scope)}`)).status,
+      404,
+      "history is gated by the same roster",
+    );
+
+    const actions = (await s.built.auditLog.events()).filter((e) => e.principalId === "member");
+    assert.ok(
+      actions.some((e) => e.action === "memory.scope.read" && e.scopeLabel === scope),
+      "reading a shared notebook is audited as a scope read, not a self read",
+    );
+  } finally {
+    await s.close();
+  }
+});
+
+test("omitting scope still reads the caller's own notebook, and cannot be aimed elsewhere", async () => {
+  const s = start();
+  try {
+    await s.built.memory.capture(scopeId("personal", "U1"), ["Prefers terse replies"], Date.parse("2026-05-31"));
+    const own = await json(await fetch(`${s.base}/v1/memory?principalId=U1`));
+    assert.match(own.content, /Prefers terse replies/, "no scope param → the caller's personal notebook");
+    assert.equal(own.scopeId, scopeId("personal", "U1"));
+
+    const explicit = await json(
+      await fetch(`${s.base}/v1/memory?principalId=U1&scope=${encodeURIComponent(scopeId("personal", "U1"))}`),
+    );
+    assert.equal(explicit.content, own.content, "naming your own scope is the same read");
+
+    const actions = (await s.built.auditLog.events()).filter((e) => e.principalId === "U1").map((e) => e.action);
+    assert.ok(actions.includes("memory.self.read"), "own-notebook reads stay audited as self reads");
+    assert.ok(!actions.includes("memory.scope.read"), "and are not relabelled");
   } finally {
     await s.close();
   }
