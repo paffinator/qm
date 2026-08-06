@@ -1,5 +1,5 @@
 import { html, nothing, render, type TemplateResult } from "lit";
-import { Clock3, Pencil, RefreshCw, Search, Trash2 } from "lucide";
+import { ChevronLeft, Clock3, Pencil, RefreshCw, Search, Trash2 } from "lucide";
 import { api, ApiError } from "./core-bridge";
 import { errMessage } from "../../chassis/src/errors";
 import { icon } from "./ui";
@@ -25,7 +25,10 @@ let historyOpen = false;
 let history: RevisionRow[] = [];
 let memoryConfirmation: { title: string; body: string; action: string; run: () => Promise<void> } | null = null;
 let memoryScope = "";
+let memoryTab: "mine" | "projects" = "mine";
 let projectScopes: Array<{ scopeId: string; name: string }> = [];
+let projectFactCounts = new Map<string, number>();
+let projectsLoading = false;
 
 export function resetMemoryState(): void {
   memoryDraft = "";
@@ -40,7 +43,10 @@ export function resetMemoryState(): void {
   history = [];
   memoryConfirmation = null;
   memoryScope = "";
+  memoryTab = "mine";
   projectScopes = [];
+  projectFactCounts = new Map();
+  projectsLoading = false;
 }
 
 function ownNotebook(): boolean {
@@ -64,24 +70,36 @@ async function loadProjectScopes(): Promise<void> {
   );
 }
 
-function switchScope(scopeId: string): void {
-  if (scopeId === memoryScope) return;
+async function loadProjectFactCounts(): Promise<void> {
+  const counts = await Promise.all(
+    projectScopes.map(async (p) => {
+      const r = await api<{ content?: string }>(`/api/memory?scope=${encodeURIComponent(p.scopeId)}`).catch(() => null);
+      return [p.scopeId, r ? facts(r.content ?? "").length : -1] as const;
+    }),
+  );
+  projectFactCounts = new Map(counts);
+}
+
+function goTo(tab: "mine" | "projects", scopeId = ""): void {
+  if (tab === memoryTab && scopeId === memoryScope) return;
   const move = () => {
+    memoryTab = tab;
     memoryScope = scopeId;
     memoryDraft = "";
     memorySaved = "";
     memoryRevision = "";
     memoryLoaded = false;
     history = [];
+    historyOpen = false;
     search = "";
     memoryConfirmation = null;
     void renderMemory(true);
   };
-  if (memoryLoaded && memoryDraft !== memorySaved) {
+  if (memoryLoaded && ownNotebook() && memoryDraft !== memorySaved) {
     memoryConfirmation = {
       title: "Discard unsaved memory changes?",
-      body: "Switching notebooks will drop this draft. Copy anything you want to keep before continuing.",
-      action: "Discard and switch",
+      body: "Leaving your notebook will drop this draft. Copy anything you want to keep before continuing.",
+      action: "Discard and leave",
       run: async () => move(),
     };
     return void drawMemory();
@@ -166,6 +184,85 @@ function notebookBody(loading: boolean, visible: Fact[]): TemplateResult {
     </div>`;
 }
 
+function showingNotebook(): boolean {
+  return memoryTab === "mine" || memoryScope !== "";
+}
+
+function subtitle(): string {
+  if (memoryTab === "mine") return "Facts the agent carries into your conversations.";
+  if (!memoryScope) return "Notebooks shared by the projects you belong to.";
+  return `Facts every member of ${scopeName()} shares. Your own memory stays private to you.`;
+}
+
+function factCountLabel(count: number | undefined): string {
+  if (count === undefined) return "Counting facts…";
+  if (count < 0) return "Could not be read";
+  if (count === 0) return "Nothing remembered yet";
+  return count === 1 ? "1 remembered fact" : `${count} remembered facts`;
+}
+
+function projectListPane(): TemplateResult {
+  if (projectsLoading && !projectScopes.length) return html`<div class="empty-state">Loading your projects…</div>`;
+  if (!projectScopes.length) {
+    return html`<div class="empty-state">
+      You are not in any projects yet. A project gets its own notebook as soon as its chats have something worth
+      remembering.
+    </div>`;
+  }
+  return html`<p class="memory-help">
+      Every project you belong to keeps its own notebook, written as that project's chats happen. Open one to read it.
+      Your own memory stays separate and private to you.
+    </p>
+    <div class="memory-facts">
+      ${projectScopes.map((p) => {
+        const count = projectFactCounts.get(p.scopeId);
+        return html`<div class="memory-fact">
+          <div>
+            <div>${p.name}</div>
+            <div class="card-meta">${factCountLabel(count)}</div>
+          </div>
+          <button class="btn" type="button" @click=${() => goTo("projects", p.scopeId)}>Open</button>
+        </div>`;
+      })}
+    </div>`;
+}
+
+function notebookPane(loading: boolean, visible: Fact[], dirty: boolean): TemplateResult {
+  return html`${
+      memoryScope
+        ? html`<div class="actions">
+            <button class="btn" type="button" @click=${() => goTo("projects")}>
+              ${icon(ChevronLeft, 15)} All projects
+            </button>
+          </div>`
+        : nothing
+    }
+    <p class="memory-help">
+      ${
+        ownNotebook()
+          ? "Edit the notebook directly. Switch to Facts view to search or remove individual facts. Saves are protected if the agent remembers something new while this page is open."
+          : html`Read-only here. A project notebook is written by the agent as that project's chats happen, so it is not
+            edited by hand — and editing it from this page would silently write to your own memory instead.`
+      }
+    </p>
+    ${notebookBody(loading, visible)}
+    ${
+      ownNotebook()
+        ? html`<div class="memory-actions">
+            <button
+              class="btn primary memory-save"
+              type="button"
+              ?disabled=${loading || memorySaving || !dirty}
+              @click=${() => void saveMemory()}
+            >
+              ${memorySaving ? "Saving…" : "Save changes"}
+            </button>
+            <span class="memory-hint">${dirty && !memorySaving ? "Unsaved changes" : ""}</span>
+          </div>`
+        : nothing
+    }`;
+}
+
 function drawMemory(loading = false): void {
   if (appState.currentView !== "memory" || !appState.mainEl) return;
   const dirty = memoryDraft !== memorySaved;
@@ -179,30 +276,11 @@ function drawMemory(loading = false): void {
       <div class="pane-head">
         <div>
           <h1 class="pane-title">Memory</h1>
-          <div class="pane-subtitle">
-            ${
-              ownNotebook()
-                ? "Facts the agent carries into your conversations."
-                : html`Facts every member of ${scopeName()} shares. Your own memory stays private to you.`
-            }
-          </div>
+          <div class="pane-subtitle">${subtitle()}</div>
         </div>
         <div class="pane-head-actions">
           ${
-            projectScopes.length
-              ? html`<label class="list-select"
-                  ><span>Notebook</span
-                  ><select @change=${(event: Event) => switchScope((event.currentTarget as HTMLSelectElement).value)}>
-                    <option value="" ?selected=${ownNotebook()}>Your memory</option>
-                    ${projectScopes.map(
-                      (p) => html`<option value=${p.scopeId} ?selected=${p.scopeId === memoryScope}>${p.name}</option>`,
-                    )}
-                  </select></label
-                >`
-              : nothing
-          }
-          ${
-            ownNotebook()
+            memoryTab === "mine"
               ? html`<button
                   class="btn"
                   type="button"
@@ -215,7 +293,13 @@ function drawMemory(loading = false): void {
                 </button>`
               : nothing
           }
-          <button class="btn" type="button" @click=${() => void toggleHistory()}>${icon(Clock3, 15)} History</button>
+          ${
+            showingNotebook()
+              ? html`<button class="btn" type="button" @click=${() => void toggleHistory()}>
+                  ${icon(Clock3, 15)} History
+                </button>`
+              : nothing
+          }
           <button
             class="pane-refresh"
             type="button"
@@ -228,33 +312,18 @@ function drawMemory(loading = false): void {
         </div>
       </div>
       ${memoryNotice || loading ? html`<div class="status">${memoryNotice || "Loading…"}</div>` : nothing}
+      <div class="actions">
+        <button class="btn ${memoryTab === "mine" ? "primary" : ""}" type="button" @click=${() => goTo("mine")}>
+          My memory
+        </button>
+        <button class="btn ${memoryTab === "projects" ? "primary" : ""}" type="button" @click=${() => goTo("projects")}>
+          Projects memory
+        </button>
+      </div>
       <div class="memory-editor">
-        <p class="memory-help">
-          ${
-            ownNotebook()
-              ? "Edit the notebook directly. Switch to Facts view to search or remove individual facts. Saves are protected if the agent remembers something new while this page is open."
-              : html`Read-only here. A project notebook is written by the agent as the project talks, so it is not
-                edited by hand — and editing it from this page would silently write to your own memory instead.`
-          }
-        </p>
-        ${notebookBody(loading, visible)}
+        ${showingNotebook() ? notebookPane(loading, visible, dirty) : projectListPane()}
         ${
-          ownNotebook()
-            ? html`<div class="memory-actions">
-                <button
-                  class="btn primary memory-save"
-                  type="button"
-                  ?disabled=${loading || memorySaving || !dirty}
-                  @click=${() => void saveMemory()}
-                >
-                  ${memorySaving ? "Saving…" : "Save changes"}
-                </button>
-                <span class="memory-hint">${dirty && !memorySaving ? "Unsaved changes" : ""}</span>
-              </div>`
-            : nothing
-        }
-        ${
-          historyOpen
+          historyOpen && showingNotebook()
             ? html` <section class="memory-history">
                 <h2>Revision history</h2>
                 ${
@@ -328,12 +397,22 @@ export async function renderMemory(force = false): Promise<void> {
   const seq = appState.viewRenderSeq;
   memoryNotice = "";
   drawMemory(true);
+  projectsLoading = true;
   try {
     await loadProjectScopes();
   } catch (e) {
     memoryNotice = errMessage(e, "Failed to list your projects; showing your own memory only.");
+  } finally {
+    projectsLoading = false;
   }
   if (memoryScope && !projectScopes.some((p) => p.scopeId === memoryScope)) memoryScope = "";
+  if (!showingNotebook()) {
+    if (seq !== appState.viewRenderSeq || appState.currentView !== "memory") return;
+    drawMemory();
+    await loadProjectFactCounts();
+    if (seq !== appState.viewRenderSeq || appState.currentView !== "memory") return;
+    return void drawMemory();
+  }
   try {
     const r = await api<{ content?: string; revision?: string }>(`/api/memory${scopeQuery()}`);
     if (seq !== appState.viewRenderSeq || appState.currentView !== "memory") return;
