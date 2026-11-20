@@ -2,6 +2,51 @@
 
 A multiplayer agent harness for work. In Slack and on the web.
 
+## About this repository
+
+This repository is a fork of [qm](https://github.com/yc-software/qm), an open-source
+multiplayer agent harness released under the MIT License. Its history begins with a single
+commit,
+[`e9d974e`](https://github.com/paffinator/qm/commit/e9d974ed3870201da8273d754dec78302a4c0365),
+that imports upstream qm unchanged as of upstream commit
+[`7f2c916`](https://github.com/yc-software/qm/commit/7f2c916360f1797a8ff2a77ce2ce40c5fabab087)
+(31 July 2026). The core harness, the plugins, the CLI, and the documentation that follows
+this section are the work of the upstream authors.
+
+As of November 2026 the fork has not merged from upstream again, so every commit after the
+import is work added here by [Addifications](https://github.com/addifications). The
+[comparison since the import](https://github.com/paffinator/qm/compare/e9d974ed3870201da8273d754dec78302a4c0365...main)
+shows all of it. Unlike the private-fork arrangement described under
+[Customize your instance](#customize-your-instance), this fork changes core directly.
+
+- **Encrypted secrets for published apps.** App environment values moved off a plaintext
+  field baked into every immutable version and into an encrypted store. Values can be
+  rotated without a republish, a rollback no longer resurrects an old credential, and the
+  web UI gained a write-only Secrets section. A boot migration imports the existing
+  plaintext and strips it from past versions.
+- **A Postgres schema per published app.** A deployment can give each app its own schema
+  and a login role scoped to it. The connection URL, with its generated password, is stored
+  encrypted and reaches the app as `DATABASE_URL` alongside its secrets. The isolation is
+  covered by a Postgres-backed test that CI does not run, because it needs
+  `APP_DB_ADMIN_URL`, so it is run by hand.
+- **A guard on published environment variables.** A published value can no longer override
+  the variables the runtime sets for itself, and the AWS and Docker deploy providers now
+  share one key filter.
+- **Subscription credentials for the CLI harnesses.** Upstream already passed a Claude
+  subscription token through to the Claude Code child process. This fork makes model
+  availability, the secret checks at boot, and the onboarding screens recognise that
+  credential, and lets the Codex harness run on an existing ChatGPT-subscription login.
+  This is a path for local and personal instances: `qm up` has no built-in support for
+  subscription credentials.
+- **Project memory on the web.** A project member can read the notebook their project
+  shares through a membership-gated API, and the Memory page separates personal memory
+  from project memory. Memory capture also stopped treating a fact as new when it differs
+  only by a trailing parenthetical the model added about when or by whom it was stated. A
+  shared fact's `(said in …)` source tag still keeps it distinct.
+- **Research notes** on running qm against Supabase:
+  [the connection pooler](./docs/research/supabase-pooler-vs-qm.md) and
+  [the object store](./docs/research/supabase-storage-vs-qm-s3.md).
+
 ![The QM web UI: two concurrent sessions, a sidebar of personal files, crons, keychain, deploys, memory, and skills](./docs/screenshots/web-ui-hero.png)
 
 ## What is QM?
