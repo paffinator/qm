@@ -503,7 +503,6 @@ function drawDeployDetail(d: DeploymentView, loading = false): void {
               </section>`
             : nothing
         }
-
         ${canManage(d) ? deploySecretsSection(d) : nothing}
 
         <section class="deploy-detail-section">
@@ -884,7 +883,8 @@ function deploySecretRows(d: DeploymentView, state: DeploySecretsState): Templat
       (s) => html`
         <div class="deploy-version-row">
           <div>
-            <strong><code>${s.envKey}</code></strong><span class="badge">${SECRET_SOURCE_LABEL[s.source]}</span
+            <strong><code>${s.envKey}</code></strong
+            ><span class="badge">${SECRET_SOURCE_LABEL[s.source]}</span
             >${s.credentialId ? html`<span class="badge">From a keychain credential</span>` : nothing}
           </div>
           <div>

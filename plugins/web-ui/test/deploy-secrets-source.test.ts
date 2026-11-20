@@ -7,7 +7,10 @@ import { dirname, join } from "node:path";
 const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "src", "deploys.ts"), "utf8");
 
 test("the secrets UI has no input that could carry a value — pasting happens on the drop form", () => {
-  const secretsSection = src.slice(src.indexOf("function deploySecretsSection"), src.indexOf("async function restoreDeploy"));
+  const secretsSection = src.slice(
+    src.indexOf("function deploySecretsSection"),
+    src.indexOf("async function restoreDeploy"),
+  );
   assert.ok(secretsSection.length > 0, "the secrets section exists");
   assert.ok(!secretsSection.includes('type="password"'), "no password input lives in the app shell");
   assert.match(secretsSection, /placeholder="API_KEY"/, "the only input collects the env key, not the value");
@@ -24,7 +27,10 @@ test("the secrets UI renders the salted digest and never a raw fingerprint", () 
 });
 
 test("setting a secret goes through a drop link rather than posting the value to the BFF", () => {
-  const addFn = src.slice(src.indexOf("async function addDeploySecret"), src.indexOf("async function deleteDeploySecret"));
+  const addFn = src.slice(
+    src.indexOf("async function addDeploySecret"),
+    src.indexOf("async function deleteDeploySecret"),
+  );
   assert.match(addFn, /secrets\/drop/, "it mints a drop");
   assert.deepEqual(
     addFn.match(/JSON\.stringify\([^)]*\)/g),

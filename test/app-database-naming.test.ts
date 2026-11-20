@@ -22,7 +22,9 @@ test("an id that cannot yield an identifier is refused rather than quietly mangl
 });
 
 test("the pooler admin URL is parsed into the parts needed to mint an app URL", () => {
-  const parts = parseAdminUrl("postgres://postgres.abcdefghijklmnop:pw@aws-0-us-east-1.pooler.supabase.com:5432/postgres");
+  const parts = parseAdminUrl(
+    "postgres://postgres.abcdefghijklmnop:pw@aws-0-us-east-1.pooler.supabase.com:5432/postgres",
+  );
   assert.deepEqual(parts, {
     host: "aws-0-us-east-1.pooler.supabase.com",
     port: "5432",

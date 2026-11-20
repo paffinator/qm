@@ -107,7 +107,10 @@ test("an app role cannot create schemas, roles, or escape into public", { skip }
       "public is not writable",
     );
 
-    const su = await asApp(url, "SELECT rolsuper, rolcreaterole, rolcreatedb FROM pg_roles WHERE rolname = current_user");
+    const su = await asApp(
+      url,
+      "SELECT rolsuper, rolcreaterole, rolcreatedb FROM pg_roles WHERE rolname = current_user",
+    );
     assert.deepEqual(su[0], { rolsuper: false, rolcreaterole: false, rolcreatedb: false }, "no elevated attributes");
   } finally {
     await db.destroy(APP_A);

@@ -26,7 +26,7 @@ explicit unlock or session end:
   taken on a dedicated `pool.connect()` client, DDL applied, then `pg_advisory_unlock` in `finally`.
 - `src/persistence/advisory-lock.ts` — `createPostgresAdvisoryLock` uses
   `pg_try_advisory_lock(hashtextextended($1,0))` on a checked-out client, runs the callback while
-  holding it, then unlocks on the *same* client. Non-blocking + poll loop (`pollMs` 300,
+  holding it, then unlocks on the _same_ client. Non-blocking + poll loop (`pollMs` 300,
   `timeoutMs` 5 min), so it never parks a backend in a blocking lock wait.
 - `src/persistence/leader-lease.ts:69,86` — `pg_try_advisory_lock` / `pg_advisory_unlock` on a
   long-lived dedicated `PoolClient` held for the lifetime of the leadership, with an `error`
@@ -81,6 +81,7 @@ All of these run inside `withPgTransaction` (`src/persistence/pg-pool.ts`), i.e.
   `db_connection = if data.mode == :transaction, do: nil, else: data.db_connection` release the
   backend per statement batch in transaction mode.
   <https://github.com/supabase/supavisor/blob/main/lib/supavisor/client_handler.ex>
+
 - Port allocation is now fixed: session mode on 5432, transaction mode on 6543. Supabase
   deprecated session mode on 6543 effective 2025-02-28.
   <https://supabase.com/changelog> (entry "Supabase Connection Pooler Deprecating Session Mode on
@@ -109,15 +110,15 @@ All of these run inside `withPgTransaction` (`src/persistence/pg-pool.ts`), i.e.
 
 Ranked by how qm would experience it:
 
-| Feature | qm call sites | Failure mode in transaction mode |
-| --- | --- | --- |
-| `LISTEN` + dedicated client | session-state bus, run-signal store | **Silent.** `LISTEN` returns success; the backend is then handed to another client, so notifications are delivered to nobody qm is holding. Real-time run signals and session-state fanout degrade to "never fires" with no error. `postgres-run-signal-store`'s re-ring-on-error path does not trigger, because nothing errors. |
+| Feature                                                       | qm call sites                                                      | Failure mode in transaction mode                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LISTEN` + dedicated client                                   | session-state bus, run-signal store                                | **Silent.** `LISTEN` returns success; the backend is then handed to another client, so notifications are delivered to nobody qm is holding. Real-time run signals and session-state fanout degrade to "never fires" with no error. `postgres-run-signal-store`'s re-ring-on-error path does not trigger, because nothing errors.                     |
 | `pg_advisory_lock` / `pg_try_advisory_lock` across statements | `pg-pool.ts:45` schema init, `advisory-lock.ts`, `leader-lease.ts` | **Silent and dangerous.** The lock is acquired on whichever backend served that statement; the subsequent unlock (or the protected work) may land on a different backend. Two instances can both believe they hold `deploy:<id>` or the leader lease, and an orphaned lock can persist on a pooled backend until it is recycled. No error is raised. |
-| Named prepared statements | none (see §2) | Loud (`prepared statement "…" does not exist`) — but qm never creates any. |
-| `pg_advisory_xact_lock` inside `withPgTransaction` | memory, directory, ACL, audit-log migration | **Works.** Supavisor keeps a transaction on one backend for its duration; the lock is released at COMMIT. This family is the only pooler-safe one. |
+| Named prepared statements                                     | none (see §2)                                                      | Loud (`prepared statement "…" does not exist`) — but qm never creates any.                                                                                                                                                                                                                                                                           |
+| `pg_advisory_xact_lock` inside `withPgTransaction`            | memory, directory, ACL, audit-log migration                        | **Works.** Supavisor keeps a transaction on one backend for its duration; the lock is released at COMMIT. This family is the only pooler-safe one.                                                                                                                                                                                                   |
 
-So the two families the ticket calls out are asymmetric: the *transaction*-scoped locks are fine in
-either mode; the *session*-scoped locks and LISTEN both fail **silently** in transaction mode,
+So the two families the ticket calls out are asymmetric: the _transaction_-scoped locks are fine in
+either mode; the _session_-scoped locks and LISTEN both fail **silently** in transaction mode,
 which is the worst possible failure shape for a leader lease. Session mode is not an optimisation
 here — it is a correctness requirement.
 
@@ -148,7 +149,7 @@ here — it is a correctness requirement.
 
 **[FACT] No connection-string flags are needed in either mode for node-postgres as qm uses it.**
 
-- node-postgres only uses *named* (server-cached) prepared statements when you pass a `name` in
+- node-postgres only uses _named_ (server-cached) prepared statements when you pass a `name` in
   the query config: "If you supply a `name` parameter the query execution plan will be cached on
   the PostgreSQL server on a per connection basis." Parameterised queries without `name` are
   unnamed and require no opt-out. <https://node-postgres.com/features/queries>
@@ -173,12 +174,12 @@ threads an `sslmode` default (`APP_SSLMODE_DEFAULT`) and flags plaintext URLs
 
 ### [FACT] The documented ceilings
 
-| Compute size | Direct connections | Pooler client connections |
-| --- | --- | --- |
-| **Nano (free)** | **60** | **200** |
-| Micro | 60 | 200 |
-| Small | 90 | 400 |
-| Medium | 120 | 600 |
+| Compute size    | Direct connections | Pooler client connections |
+| --------------- | ------------------ | ------------------------- |
+| **Nano (free)** | **60**             | **200**                   |
+| Micro           | 60                 | 200                       |
+| Small           | 90                 | 400                       |
+| Medium          | 120                | 600                       |
 
 Supabase adds that "the Supavisor connection limits are hard-coded and cannot be changed without
 upgrading the compute size".
@@ -217,16 +218,16 @@ Distinct pools created when `DATABASE_URL` is set (from `src/wiring.ts`):
 2. `createPostgresMapFactory` — `src/persistence/durable-map.ts` (shared by `createPostgresLeaderLease`, `createPostgresAdvisoryLock`, `createPostgresInstanceRegistry`)
 3. `createPostgresAuditLog` — `src/admin/postgres-audit-log.ts`
 4. `createPostgresRateLimiter` — `src/ratelimit/postgres-rate-limiter.ts`
-5. `createPostgresBudgetTracker` — `src/ratelimit/postgres-budget.ts` *(only when a budget is configured)*
+5. `createPostgresBudgetTracker` — `src/ratelimit/postgres-budget.ts` _(only when a budget is configured)_
 6. `createPostgresFileArtifactStore` — `src/files/postgres-file-artifact-store.ts`
 7. `createPostgresMemoryService` — `src/memory/postgres-memory-service.ts`
 8. `createPostgresErrorLog` — `src/admin/postgres-error-log.ts`
 9. `createPostgresMetricsSink` — `src/admin/postgres-metrics-sink.ts`
 10. `createPostgresCredentialUsageSink` — `src/admin/postgres-credential-usage-sink.ts`
 11. `createPostgresEgressAuditSink` — `src/admin/postgres-egress-audit-sink.ts`
-    *(8–11 each call `createPostgresEventSink` → its own `createPgPool` in `src/admin/scoped-event-sink.ts:125`)*
+    _(8–11 each call `createPostgresEventSink` → its own `createPgPool` in `src/admin/scoped-event-sink.ts:125`)_
 12. `createPostgresTaskStore` — `src/tasks/postgres-task-store.ts`
-13. `createPostgresProcessRegistry` — `src/processes/process-registry.ts` *(conditional)*
+13. `createPostgresProcessRegistry` — `src/processes/process-registry.ts` _(conditional)_
 14. `createPostgresReplayDedupe` — `src/auth/replay-dedupe.ts`
 15. `createPostgresSessionStateBus` — `src/runs/postgres-session-state-bus.ts` **(+1 permanently checked-out LISTEN client)**
 16. `createPostgresAdminGrantStore` — `src/admin/postgres-admin-grant-store.ts`
@@ -264,7 +265,7 @@ pool outside `createPgPool`.
   two instances at ~27 each is ~54, at the 60-direct free-tier wall before Supabase's own
   services (PostgREST, Auth, Realtime, Storage) take their share.
 - **Mitigation, cheapest first:** raise `Default Pool Size` in the dashboard toward the 60-direct
-  cap (documented as configurable), *and* pass a small `max` at the `createPgPool` layer. Because
+  cap (documented as configurable), _and_ pass a small `max` at the `createPgPool` layer. Because
   every core store funnels through one helper, a single default there —
   e.g. `max: options.max ?? 3` in `src/persistence/pg-pool.ts` — bounds all 27 pools at once. That
   is the "solve at the layer all paths flow through" fix; per-store `max:` values would be 27

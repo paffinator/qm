@@ -56,8 +56,7 @@ const GATE_PREDICATES: Readonly<Record<SecretGate, (env: NodeJS.ProcessEnv) => b
     env.MODEL_PROVIDER?.trim() === "anthropic" &&
     !(env.HARNESS?.trim() === "claude" && claudeKeylessCredentialInEnv(env)),
   "model-openai": (env) =>
-    env.MODEL_PROVIDER?.trim() === "openai" &&
-    !(env.HARNESS?.trim() === "codex" && codexKeylessCredentialInEnv(env)),
+    env.MODEL_PROVIDER?.trim() === "openai" && !(env.HARNESS?.trim() === "codex" && codexKeylessCredentialInEnv(env)),
   "model-openrouter": (env) => env.MODEL_PROVIDER?.trim() === "openrouter",
 };
 

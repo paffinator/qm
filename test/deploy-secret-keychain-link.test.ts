@@ -41,9 +41,7 @@ function svc(opts: { withKeychain?: boolean } = {}) {
     ...(opts.withKeychain === false
       ? {}
       : {
-          credentialFingerprints: async () => [
-            { id: CRED_ID, fingerprint: secrets.fingerprintOf(KEYCHAIN_VALUE) },
-          ],
+          credentialFingerprints: async () => [{ id: CRED_ID, fingerprint: secrets.fingerprintOf(KEYCHAIN_VALUE) }],
         }),
   });
   return { deploy, secrets, events };

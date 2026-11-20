@@ -969,7 +969,7 @@ async function callerMayManageDeployment(ctx: ApiCtx, id: string): Promise<boole
   return !principalId || ctx.app.canManageDeployment(id, principalId, ctx.capability?.scopeId);
 }
 
-export async function listDeploymentSecrets(ctx: ApiCtx): Promise<void> {
+async function listDeploymentSecrets(ctx: ApiCtx): Promise<void> {
   const { res, app, params } = ctx;
   const id = await deploymentId(app, params.id!);
   if (!id) return sendJson(res, 404, { error: "not_found" });
@@ -978,7 +978,7 @@ export async function listDeploymentSecrets(ctx: ApiCtx): Promise<void> {
   return sendJson(res, 200, { secrets: await app.listDeploymentSecrets(id) });
 }
 
-export async function deleteDeploymentSecret(ctx: ApiCtx): Promise<void> {
+async function deleteDeploymentSecret(ctx: ApiCtx): Promise<void> {
   const { res, app, params } = ctx;
   const id = await deploymentId(app, params.id!);
   if (!id) return sendJson(res, 404, { error: "not_found" });
@@ -997,7 +997,7 @@ export async function deleteDeploymentSecret(ctx: ApiCtx): Promise<void> {
   }
 }
 
-export async function mintDeploymentSecretDrop(ctx: ApiCtx): Promise<void> {
+async function mintDeploymentSecretDrop(ctx: ApiCtx): Promise<void> {
   const { res, app, params, body, deps, secret } = ctx;
   if (!deps.secretDrops) return sendJson(res, 404, { error: "not_found" });
   const id = await deploymentId(app, params.id!);
@@ -1044,7 +1044,7 @@ export async function mintDeploymentSecretDrop(ctx: ApiCtx): Promise<void> {
   return sendJson(res, 200, { dropId, formPath, url: base ? `${base}${formPath}` : formPath });
 }
 
-export async function restartDeployment(ctx: ApiCtx): Promise<void> {
+async function restartDeployment(ctx: ApiCtx): Promise<void> {
   const { res, app, params } = ctx;
   const id = await deploymentId(app, params.id!);
   if (!id) return sendJson(res, 404, { error: "not_found" });

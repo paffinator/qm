@@ -12,13 +12,11 @@ export function deployEnvKeyError(key: string): string {
   return `invalid env key "${key}": use letters, digits and underscores, not starting with a digit`;
 }
 
-export function isDeployEnvValue(value: string): boolean {
+function isDeployEnvValue(value: string): boolean {
   return !value.includes("\0");
 }
 
-export function deployEnvEntries(
-  ...envs: Array<Record<string, string> | undefined>
-): Array<[string, string]> {
+export function deployEnvEntries(...envs: Array<Record<string, string> | undefined>): Array<[string, string]> {
   const merged: Record<string, string> = {};
   for (const env of envs) {
     for (const [key, value] of Object.entries(env ?? {})) {

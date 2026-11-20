@@ -2,12 +2,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { orgId as configOrgId } from "../config.ts";
 import { AssumeRoleCommand, STSClient } from "@aws-sdk/client-sts";
 import type { Deployment, DeploymentVersion } from "./deploy-store.ts";
-import type {
-  DeployEndpoint,
-  DeployProvider,
-  DeployReconcileInput,
-  ResolveDeploySecrets,
-} from "./deploy-provider.ts";
+import type { DeployEndpoint, DeployProvider, DeployReconcileInput, ResolveDeploySecrets } from "./deploy-provider.ts";
 import { deployEnvEntries } from "./deploy-env.ts";
 import { bytes, normalizeRelPath, posixJoin, readTree } from "./deploy-fs.ts";
 import { AwsApiError, createMicrovmApi, createMicrovmClient, type AwsMicrovmApi } from "../sandbox/aws-microvm-api.ts";

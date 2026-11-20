@@ -6,7 +6,7 @@ import { errMessage } from "../util/errors.ts";
 
 export const APP_DATABASE_ENV = "DATABASE_URL";
 
-export const APP_SSLMODE_DEFAULT = "no-verify";
+const APP_SSLMODE_DEFAULT = "no-verify";
 
 const NAME_RE = /^[a-z][a-z0-9_]{0,62}$/;
 const PASSWORD_RE = /^[A-Za-z0-9_-]+$/;
@@ -30,7 +30,10 @@ export interface AppDatabase {
 }
 
 export function appDatabaseName(deploymentId: string): string {
-  const suffix = deploymentId.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 32);
+  const suffix = deploymentId
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .slice(0, 32);
   const name = `app_${suffix}`;
   if (!suffix || !NAME_RE.test(name)) {
     throw new Error(`cannot derive a Postgres identifier from deployment id "${deploymentId}"`);
@@ -93,12 +96,7 @@ export function appDatabasePlaintext(adminUrl: string): boolean {
   return !local && (mode === null || mode === "disable");
 }
 
-function mintAppUrl(
-  parts: AppDatabaseUrlParts,
-  appHost: string | undefined,
-  role: string,
-  password: string,
-): string {
+function mintAppUrl(parts: AppDatabaseUrlParts, appHost: string | undefined, role: string, password: string): string {
   const [host, port] = appHost ? splitHostPort(appHost, parts.port) : [parts.host, parts.port];
   const user = parts.projectRef ? `${role}.${parts.projectRef}` : role;
   return `postgres://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${parts.database}?sslmode=${parts.sslmode}`;
@@ -132,9 +130,7 @@ export function createPostgresAppDatabase(opts: AppDatabaseOptions): AppDatabase
   }
 
   async function bootstrap(): Promise<void> {
-    const rows = await pg.q(
-      "SELECT rolcreaterole, rolsuper FROM pg_roles WHERE rolname = current_user",
-    );
+    const rows = await pg.q("SELECT rolcreaterole, rolsuper FROM pg_roles WHERE rolname = current_user");
     const row = rows[0];
     if (!row || !(row.rolcreaterole === true || row.rolsuper === true)) {
       throw new Error(
@@ -171,9 +167,7 @@ export function createPostgresAppDatabase(opts: AppDatabaseOptions): AppDatabase
         `CREATE ROLE ${ident} WITH LOGIN PASSWORD '${password}' INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT ${opts.maxConnections}`,
       );
     } else {
-      await exec(
-        `ALTER ROLE ${ident} WITH LOGIN PASSWORD '${password}' CONNECTION LIMIT ${opts.maxConnections}`,
-      );
+      await exec(`ALTER ROLE ${ident} WITH LOGIN PASSWORD '${password}' CONNECTION LIMIT ${opts.maxConnections}`);
     }
     await exec(`GRANT CONNECT ON DATABASE ${quoteIdent(parts.database)} TO ${ident}`);
     await exec(`CREATE SCHEMA IF NOT EXISTS ${ident}`);

@@ -89,9 +89,7 @@ export function createDeploySecretStore(input: {
     try {
       return decryptSecret(rec.secretEnc, key);
     } catch (e) {
-      console.warn(
-        `deploy-secrets: cannot decrypt ${rec.deploymentId}:${rec.envKey} — skipping (${errMessage(e)})`,
-      );
+      console.warn(`deploy-secrets: cannot decrypt ${rec.deploymentId}:${rec.envKey} — skipping (${errMessage(e)})`);
       return null;
     }
   }

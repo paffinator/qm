@@ -315,7 +315,7 @@ interface AwsDeployEnv {
   dataRoleArn?: string;
 }
 
-export interface AppDbConfig {
+interface AppDbConfig {
   adminUrl: string;
   appHost?: string;
   maxConnections: number;
@@ -325,7 +325,8 @@ function appDbEnv(env: NodeJS.ProcessEnv, databaseUrl?: string): { appDb?: AppDb
   const adminUrl = env.APP_DB_ADMIN_URL?.trim();
   const appHost = env.APP_DB_APP_HOST?.trim();
   if (!adminUrl) {
-    if (appHost) throw new Error("APP_DB_APP_HOST is set without APP_DB_ADMIN_URL — published apps would get no database");
+    if (appHost)
+      throw new Error("APP_DB_APP_HOST is set without APP_DB_ADMIN_URL — published apps would get no database");
     return {};
   }
   let parsed: URL;

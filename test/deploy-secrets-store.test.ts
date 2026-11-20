@@ -70,7 +70,13 @@ test("a row encrypted under a different key is skipped, and its siblings still r
 test("secrets are scoped to their deployment", async () => {
   const { secrets } = store();
   await secrets.put({ deploymentId: ID, envKey: "A", value: "mine", source: "publish", setBy: "u1" });
-  await secrets.put({ deploymentId: "99999999-0000-0000-0000-000000000000", envKey: "A", value: "theirs", source: "publish", setBy: "u2" });
+  await secrets.put({
+    deploymentId: "99999999-0000-0000-0000-000000000000",
+    envKey: "A",
+    value: "theirs",
+    source: "publish",
+    setBy: "u2",
+  });
 
   assert.deepEqual(await secrets.resolve(ID), { A: "mine" });
 });
@@ -79,8 +85,14 @@ test("remove reports whether anything was there, and putIfAbsent never overwrite
   const { secrets } = store();
   assert.equal(await secrets.remove(ID, "GONE"), false);
 
-  assert.equal(await secrets.putIfAbsent({ deploymentId: ID, envKey: "A", value: "first", source: "legacy", setBy: "migration" }), true);
-  assert.equal(await secrets.putIfAbsent({ deploymentId: ID, envKey: "A", value: "second", source: "legacy", setBy: "migration" }), false);
+  assert.equal(
+    await secrets.putIfAbsent({ deploymentId: ID, envKey: "A", value: "first", source: "legacy", setBy: "migration" }),
+    true,
+  );
+  assert.equal(
+    await secrets.putIfAbsent({ deploymentId: ID, envKey: "A", value: "second", source: "legacy", setBy: "migration" }),
+    false,
+  );
   assert.deepEqual(await secrets.resolve(ID), { A: "first" });
 
   assert.equal(await secrets.remove(ID, "A"), true);

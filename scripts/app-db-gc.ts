@@ -55,7 +55,8 @@ for (const schema of schemas) {
 }
 
 console.log(`${schemas.length} app schemas, ${live.size} deployments, ${orphans.length} collectable`);
-for (const o of orphans) console.log(`  ${o.schema} — ${o.reason}${live.get(o.schema)?.name ? ` (${live.get(o.schema)!.name})` : ""}`);
+for (const o of orphans)
+  console.log(`  ${o.schema} — ${o.reason}${live.get(o.schema)?.name ? ` (${live.get(o.schema)!.name})` : ""}`);
 
 if (!orphans.length) {
   await pg.close();

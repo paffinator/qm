@@ -162,12 +162,7 @@ export function createTurnMethods(
             deps.cliCredentials,
           );
         } else if (deps.providerKeys) {
-          providers = modelProviderAvailabilityFor(
-            runtime.harnessId,
-            configuredKeys,
-            undefined,
-            deps.cliCredentials,
-          );
+          providers = modelProviderAvailabilityFor(runtime.harnessId, configuredKeys, undefined, deps.cliCredentials);
         }
         if (providers && !modelServiceable(runtime.modelId, providers)) {
           return {

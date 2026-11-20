@@ -12,6 +12,7 @@
     ".": {
       "entry": [
         "src/sandbox/local-sandbox.ts",
+        "scripts/app-db-gc.ts",
         "scripts/aws-deploy-smoke.ts",
         "scripts/aws-litestream-smoke.ts",
         "scripts/backfill-session-tape.ts",

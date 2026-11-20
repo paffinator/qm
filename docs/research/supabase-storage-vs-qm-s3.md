@@ -61,13 +61,13 @@ Consequences, all verified:
 Empirically measured request URLs (SDK 3.1096.0, endpoint
 `https://abcdef.storage.supabase.co/storage/v1/s3`, `PutObject` of key `files/abc`):
 
-| bucket | `forcePathStyle` | request URL |
-| --- | --- | --- |
-| `qm-artifacts` | default (false) | `https://qm-artifacts.abcdef.storage.supabase.co/storage/v1/s3/files/abc` — **broken** |
-| `qm-artifacts` | `true` | `https://abcdef.storage.supabase.co/storage/v1/s3/qm-artifacts/files/abc` — correct |
-| `qm` (2 chars) | default (false) | `https://abcdef.storage.supabase.co/storage/v1/s3/qm/files/abc` — correct |
-| `qm.files` | default (false) | `https://abcdef.storage.supabase.co/storage/v1/s3/qm.files/files/abc` — correct |
-| `qm_files` | default (false) | `https://abcdef.storage.supabase.co/storage/v1/s3/qm_files/files/abc` — correct |
+| bucket         | `forcePathStyle` | request URL                                                                            |
+| -------------- | ---------------- | -------------------------------------------------------------------------------------- |
+| `qm-artifacts` | default (false)  | `https://qm-artifacts.abcdef.storage.supabase.co/storage/v1/s3/files/abc` — **broken** |
+| `qm-artifacts` | `true`           | `https://abcdef.storage.supabase.co/storage/v1/s3/qm-artifacts/files/abc` — correct    |
+| `qm` (2 chars) | default (false)  | `https://abcdef.storage.supabase.co/storage/v1/s3/qm/files/abc` — correct              |
+| `qm.files`     | default (false)  | `https://abcdef.storage.supabase.co/storage/v1/s3/qm.files/files/abc` — correct        |
+| `qm_files`     | default (false)  | `https://abcdef.storage.supabase.co/storage/v1/s3/qm_files/files/abc` — correct        |
 
 The pattern is the AWS virtual-hosting rule: the SDK only hoists the bucket into the hostname when
 the bucket name is a valid virtual-host label (3–63 chars, lowercase, no dots/underscores). A name
@@ -176,21 +176,21 @@ S3 credential and does not go here; the session-token form would technically wor
 
 From [Supabase — S3 Compatibility](https://supabase.com/docs/guides/storage/s3/compatibility):
 
-| Operation qm uses | Supabase | Path |
-| --- | --- | --- |
-| `PutObject` | ✅ (system metadata: Content-Type, Cache-Control, Content-Disposition, Content-Encoding, Content-Language, Expires; ❌ Content-MD5) | both stores |
-| `GetObject` | ✅ (conditional requests + ranges) | both stores |
-| `DeleteObject` | ✅ | both stores |
-| `ListObjectsV2` | ✅ (`continuation-token`, `delimiter`, `max-keys`, `prefix`, `start-after`, …) | transfer sweep |
-| `CreateMultipartUpload` | ✅ | transfer store |
-| `UploadPart` | ✅ | transfer store |
-| `CompleteMultipartUpload` | ✅ | transfer store |
-| `AbortMultipartUpload` | ✅ | transfer store |
-| Presigned URLs | ✅ (SigV4 query parameters) | unused by qm |
-| `GetBucketLifecycleConfiguration` | ❌ | `ensureExpiry` |
-| `PutBucketLifecycleConfiguration` | ❌ | `ensureExpiry` |
+| Operation qm uses                 | Supabase                                                                                                                            | Path           |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `PutObject`                       | ✅ (system metadata: Content-Type, Cache-Control, Content-Disposition, Content-Encoding, Content-Language, Expires; ❌ Content-MD5) | both stores    |
+| `GetObject`                       | ✅ (conditional requests + ranges)                                                                                                  | both stores    |
+| `DeleteObject`                    | ✅                                                                                                                                  | both stores    |
+| `ListObjectsV2`                   | ✅ (`continuation-token`, `delimiter`, `max-keys`, `prefix`, `start-after`, …)                                                      | transfer sweep |
+| `CreateMultipartUpload`           | ✅                                                                                                                                  | transfer store |
+| `UploadPart`                      | ✅                                                                                                                                  | transfer store |
+| `CompleteMultipartUpload`         | ✅                                                                                                                                  | transfer store |
+| `AbortMultipartUpload`            | ✅                                                                                                                                  | transfer store |
+| Presigned URLs                    | ✅ (SigV4 query parameters)                                                                                                         | unused by qm   |
+| `GetBucketLifecycleConfiguration` | ❌                                                                                                                                  | `ensureExpiry` |
+| `PutBucketLifecycleConfiguration` | ❌                                                                                                                                  | `ensureExpiry` |
 
-Bucket operations that *are* supported: `ListBuckets`, `HeadBucket`, `CreateBucket`, `DeleteBucket`,
+Bucket operations that _are_ supported: `ListBuckets`, `HeadBucket`, `CreateBucket`, `DeleteBucket`,
 `GetBucketLocation`. Not supported: CORS (`GetBucketCors`, `PutBucketCors`, `DeleteBucketCors`),
 `GetBucketEncryption`, and the two lifecycle calls. Object tagging (`x-amz-tagging`) and ACLs
 (`x-amz-acl`, `x-amz-grant-*`) are ❌. Versioning is explicitly out: "S3 versioning is not supported.
@@ -317,7 +317,7 @@ Verified above unless marked otherwise.
 
 For a single-user local instance, the acceptable fallback — Postgres metadata plus local-disk bytes,
 i.e. exactly today's default at `src/wiring.ts:559` — remains reasonable, and the reason is now
-precise. Supabase Storage *can* hold the bytes and the wiring is close to free, but:
+precise. Supabase Storage _can_ hold the bytes and the wiring is close to free, but:
 
 - it needs a core code change (or a bucket-naming trick) for path-style addressing;
 - it caps individual artifacts at 50 MB on the Free plan, tighter than qm's own 1 GB limit;
