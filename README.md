@@ -2,22 +2,27 @@
 
 A multiplayer agent harness for work. In Slack and on the web.
 
-## About this repository
+![The QM web UI: two concurrent sessions, a sidebar of personal files, crons, keychain, deploys, memory, and skills](./docs/screenshots/web-ui-hero.png)
 
-This repository is a fork of [qm](https://github.com/yc-software/qm), an open-source
-multiplayer agent harness released under the MIT License. Its history begins with a single
-commit,
-[`e9d974e`](https://github.com/paffinator/qm/commit/e9d974ed3870201da8273d754dec78302a4c0365),
-that imports upstream qm unchanged as of upstream commit
-[`7f2c916`](https://github.com/yc-software/qm/commit/7f2c916360f1797a8ff2a77ce2ce40c5fabab087)
-(31 July 2026). The core harness, the plugins, the CLI, and the documentation that follows
-this section are the work of the upstream authors.
+## What is QM?
 
-As of November 2026 the fork has not merged from upstream again, so every commit after the
-import is work added here by [Addifications](https://github.com/addifications). The
-[comparison since the import](https://github.com/paffinator/qm/compare/e9d974ed3870201da8273d754dec78302a4c0365...main)
-shows all of it. Unlike the private-fork arrangement described under
-[Customize your instance](#customize-your-instance), this fork changes core directly.
+Most agents are designed like personal assistants. You can make one work for a whole
+company, but it quickly gets complex. QM is designed for startups. Employees each get
+their own isolated workspace and work independently without affecting each other, and
+they can also collaborate with the agent in channels, group messages, and projects.
+
+Each person and each room has its own scoped memory, files, keychain view, permissions,
+crons, web apps, and durable sandbox.
+
+It's built with open source in mind. Pick your own harness and model and switch between
+them — Pi, OpenCode, Codex, and Claude Code all drive the same core, so a deployment
+isn't tied to any single vendor.
+
+## What this fork adds
+
+This repository builds on [qm](https://github.com/yc-software/qm), the open-source agent
+harness described above, and adds the following
+([full diff](https://github.com/paffinator/qm/compare/e9d974ed3870201da8273d754dec78302a4c0365...main)):
 
 - **Encrypted secrets for published apps.** App environment values moved off a plaintext
   field baked into every immutable version and into an encrypted store. Values can be
@@ -46,22 +51,6 @@ shows all of it. Unlike the private-fork arrangement described under
 - **Research notes** on running qm against Supabase:
   [the connection pooler](./docs/research/supabase-pooler-vs-qm.md) and
   [the object store](./docs/research/supabase-storage-vs-qm-s3.md).
-
-![The QM web UI: two concurrent sessions, a sidebar of personal files, crons, keychain, deploys, memory, and skills](./docs/screenshots/web-ui-hero.png)
-
-## What is QM?
-
-Most agents are designed like personal assistants. You can make one work for a whole
-company, but it quickly gets complex. QM is designed for startups. Employees each get
-their own isolated workspace and work independently without affecting each other, and
-they can also collaborate with the agent in channels, group messages, and projects.
-
-Each person and each room has its own scoped memory, files, keychain view, permissions,
-crons, web apps, and durable sandbox.
-
-It's built with open source in mind. Pick your own harness and model and switch between
-them — Pi, OpenCode, Codex, and Claude Code all drive the same core, so a deployment
-isn't tied to any single vendor.
 
 ## Features
 
